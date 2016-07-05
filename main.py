@@ -7,25 +7,27 @@ from kivy.lang import Builder
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.properties import NumericProperty, BooleanProperty
-from math import atan2
+from math import atan2, degrees, radians, inf, sin, cos, tan
 
 Builder.load_string("""
 #: kivy 1.9.1   
 
 <Game>
-    LeftStick:
-        center: 100, 100
     EntityContainer:
         id: entity_container
         size: root.size
         pos: root.pos
+    LeftStick:
+        center: 100, 100
+    AbilityButton:
+        center: root.width - 100, 100
 
 <LeftStick>
     moving_stick: moving
     Widget:
         id: station
-        center: root.center
         size: 100, 100
+        center: root.center
         canvas:
             Ellipse:
                 size: self.size
@@ -44,6 +46,20 @@ Builder.load_string("""
             Ellipse:
                 size: self.size
                 pos: self.pos
+
+<AbilityButton>
+    Widget:
+        canvas:
+            Ellipse:
+                size: root.size
+                pos: root.pos
+    Widget:
+        id: hitbox
+        # balance is the average of the default axis aligned bounding box and
+        # a smaller box where the corners touch the edge of the button ellipse.
+        balance: ((root.height ** 2 / 2) ** 0.5 + root.height) / 2
+        size: balance, balance
+        center: root.center
 """)
 
 Window.size = (800, 600)
@@ -76,10 +92,18 @@ class Player(Entity):
     def __init__(self, hp=100, size=20, **kwargs):
         super(Entity, self).__init__(hp, size, **kwargs)
 
+def difference(pos1, pos2):
+    return (pos2[0] - pos1[0], pos2[1] - pos1[1])
+
 
 class LeftStick(Widget):
 
-    touching = BooleanProperty()
+    #touching = BooleanProperty()
+    moving_edge = NumericProperty()
+
+    def __init__(self, **kwargs):
+        super(LeftStick, self).__init__(**kwargs)
+        self.moving_edge = self.height / 2
 
     """For on_touch_down, it detects whether the touch is on the moving_stick,
     before it binds the pos of the moving_stick onto the touch, this is so that
@@ -88,22 +112,54 @@ class LeftStick(Widget):
     called unless the touch starts from the center (and on the moving_stick).
     """
     def touch_handler(self, touch):
-        if self.moving_stick.collide_point(*touch.pos):
-            self.touching = True
-        else:
-            self.touching = False
-
+        self.touch_callback(touch)
     
     # For on_touch_move
     def touch_callback(self, touch):
-        if self.collide_point(*touch.pos) and self.touching:
-            self.moving_stick.center = touch.pos
-        else:
-            self.touch_revert()
+        if touch.x < Window.width / 2:
+            delta = difference(self.center, touch.pos)
+            angle = atan2(delta[1], delta[0])
+            try:
+                gradient = delta[1] / delta[0]
+            except ZeroDivisionError:
+                gradient = inf
+            #print(angle, gradient)
+            if self.collide_point(*touch.pos):
+                self.moving_stick.center = touch.pos
+            else:
+                # Intense right angle trigonometry
+                # Converting between rads and degrees for absolute value of degrees, don't know a better way.
+                # EDIT: Don't need abs value, it works without doing it
+                # Operates on 'triangle' where the moving_edge is the hypotnuse
+                x = self.center_x + self.moving_edge * cos(angle)
+                y = self.center_y + self.moving_edge * sin(angle)
+                self.moving_stick.center = (x, y)
+
 
     # For on_touch_up
     def touch_revert(self):
         self.moving_stick.center = self.center
+
+class AbilityButton(Widget):
+
+
+
+    # Functions to be accepted with *args with tuple which has func and its cd.
+    # Purpose: So that the button's behavior is able to be swapped out depending on hero.
+    def __init__(self, func=None, cool_down=None, **kwargs):
+        super(AbilityButton, self).__init__(**kwargs)
+        self.func = func
+        self.cool_down = cool_down
+
+    def assign(self, func, cool_down):
+        self.func = func
+        self.cool_down = cool_down
+
+    def touch_handler(self, touch):
+        pass
+
+
+
 
 class Zombie(Entity):
 
