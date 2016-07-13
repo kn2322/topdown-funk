@@ -6,7 +6,7 @@ from kivy.uix.widget import Widget
 from kivy.lang import Builder
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy.properties import NumericProperty, BooleanProperty
+from kivy.properties import NumericProperty, BooleanProperty, ObjectProperty, ReferenceListProperty
 from math import atan2, degrees, radians, inf, sin, cos, tan, hypot
 from functools import partial
 
@@ -14,12 +14,15 @@ Builder.load_string("""
 #: kivy 1.9.1
 
 <Game>
-    basic_attack: basic_attack
+    entity_container: entity_container
+    left_stick: left_stick
+
     EntityContainer:
         id: entity_container
         size: root.size
         pos: root.pos
     LeftStick:
+        id: left_stick
         center: 100, 100
     AbilityButton:
         # Testing
@@ -28,6 +31,7 @@ Builder.load_string("""
 
 <LeftStick>
     moving_stick: moving
+
     Widget:
         id: station
         size: 100, 100
@@ -36,6 +40,17 @@ Builder.load_string("""
             Ellipse:
                 size: self.size
                 pos: self.pos
+
+    Widget:
+        size: moving.size
+        center: root.center
+        canvas:
+            Color:
+                rgba: 0, 0, 1, .5
+            Ellipse:
+                size: self.size
+                pos: self.pos
+
     Widget:
         id: moving
         # args[1] is the touch object, important.
@@ -46,7 +61,7 @@ Builder.load_string("""
         size: 40, 40
         canvas:
             Color:
-                rgba: 0, 0, 1, .5
+                rgba: 0, 0, 1, 1
             Ellipse:
                 size: self.size
                 pos: self.pos
@@ -83,32 +98,118 @@ Window.size = (800, 600)
 
 # Container widget for all game entites, so they can be referenced by the game.
 class EntityContainer(Widget):
-    pass
+    
+    # To be used in main loop with 'for i in children: if condition, destroy'
+    # Additionally gold, exp, and such can be awarded here
+    def destroy(self, entity):
+        self.remove_widget(entity)
 
 # TODO: Rewrite/fix entity system to be more extensible and follow OOP
-class Entity(Widget):
+# Changed to using components
+"""class Entity(Widget):
     # hp, size, ai, in order
     game_entities = {
         'Zombie': (100, 50, None)
         }
-    """TODO: Determine different attributes of each game entity, inc but not
+    TODO: Determine different attributes of each game entity, inc but not
     limited to the source image, status effect modifiers, speed.
-    """
+    
     def __init__(self, hp, size, **kwargs):
         super(Entity, self).__init__(**kwargs)
         self.hp = hp
-        if isinstance(tuple, size):
-            self.size = size
-        else:
-            self.size = (size, size)
+        self.size = size
 
     def destroy(self):
         pass
 
-class Player(Entity):
+class BasePlayer(Entity):
     
-    def __init__(self, hp=100, size=20, **kwargs):
-        super(Entity, self).__init__(hp, size, **kwargs)
+    def __init__(self, **kwargs):
+        super(BasePlayer, self).__init__(**kwargs)
+
+class TestHero(BasePlayer):
+
+    def __init__(self, **kwargs):
+        super(TestHero, self).__init__(**kwargs)
+
+    def move(self):
+        pass
+
+
+class BaseEnemy(Entity):
+
+    def __init__(self, **kwargs):
+        super(BaseEnemy, self).__init__(**kwargs)
+
+class Zombie(BaseEnemy):
+
+    def __init__(self, **kwargs):
+        super(Zombie, self).__init__(**kwargs)
+"""
+class Entity(Widget):
+
+    Input = ObjectProperty()
+    Physics = ObjectProperty()
+    Graphics = ObjectProperty()
+    components = ReferenceListProperty()
+    velocity_x = NumericProperty()
+    velocity_y = NumericProperty()
+    velocity = ReferenceListProperty(velocity_x, velocity_y)
+    movement_angle = ReferenceListProperty()
+
+    def __init__(self, Input, Physics, Graphics, **kwargs):
+        super(Entity, self).__init__(**kwargs)
+        for i in [Input, Physics, Graphics]:
+            self.i = i
+        movement_angle = [0, 0]
+
+    def update(self):
+        self.Input.update()
+        self.Physics.update()
+        self.Graphics.update()
+
+
+def create_hero():
+    entity = Entity(Input=HeroInputComponent(entity))
+    return entity
+
+class EmptyComponent:
+
+    def update(self):
+        pass
+
+class HeroInputComponent:
+
+    def __init__(self, obj, game):
+        self.obj = obj
+        self.game = game
+
+    def update(self):
+        left_stick = self.game.left_stick
+        angle = left_stick.angle
+        # TODO: variable speed
+        # the decimal is the distance between half and full speed
+        #if left_stick.touch_distance > 0.4:
+
+        # The 'ratios' of the x and y velocities in a circle with r of 1
+        x = cos(angle)
+        y = sin(angle)
+        obj.movement_angle = [x, y]
+
+class HeroPhysicsComponent:
+
+    speed_multiplier = NumericProperty
+
+    def __init__(self, obj):
+        self.obj = obj
+        # Full movement speed, pixel/s/60 updates per second
+        self.speed_multiplier = 60/60
+
+    def update(self):
+        self.obj.velocity = [i * self.speed_multiplier 
+                             for i in self.obj.movement_angle]
+        self.obj.x += self.obj.velocity_x
+        self.obj.y += self.obj.velocity_y
 
 # deltay/deltax distance calculations
 def difference(pos1, pos2):
@@ -116,19 +217,24 @@ def difference(pos1, pos2):
 
 # Ellipse collision workaround to default axis-aligned bounding box
 # Works by finding the distance collision point is using pythag and diference
-def in_ellipse_checker(center, touch, radius):
+# This is now redundant, because hypot(*difference()) <= radius is more flexible for testing different things
+"""def in_ellipse_checker(center, touch, radius):
     if hypot(*difference(center, touch)) <= radius:
         return True
     return False
+"""
 
 class LeftStick(Widget):
 
-    #touching = BooleanProperty()
     moving_edge = NumericProperty()
 
     def __init__(self, **kwargs):
         super(LeftStick, self).__init__(**kwargs)
         self.moving_edge = self.height / 2
+        # touch_distance will be the touch's distance from center in decimal
+        # Used for hero movements
+        self.touch_distance = None
+        self.angle = 0
 
     def touch_handler(self, touch):
         # kv doesn't init to reference moving_stick in __init__ (?)
@@ -140,15 +246,13 @@ class LeftStick(Widget):
     def touch_callback(self, touch):
         if touch.x < Window.width / 2:
             delta = difference(self.center, touch.pos)
-            angle = atan2(delta[1], delta[0])
-            try:
-                gradient = delta[1] / delta[0]
-            except ZeroDivisionError:
-                gradient = inf
+            self.angle = atan2(delta[1], delta[0])
             # checks for touch collision with the control stick
-            if in_ellipse_checker(self.center, touch.pos, self.moving_edge):
+            if hypot(*difference(self.center, touch.pos)) <= self.moving_edge:
+                self.touch_distance = hypot(*difference(self.center, touch.pos)) / self.moving_edge
                 self.moving_stick.center = touch.pos
             else:
+                self.touch_distance = 1
                 # Intense right angle trigonometry
                 # Have trust in trig functions. :p
                 # Operates on 'triangle' where the moving_edge is the hypotnuse
@@ -156,8 +260,8 @@ class LeftStick(Widget):
                 y = self.center_y + self.moving_edge * sin(angle)
                 self.moving_stick.center = (x, y)
         else:
+            self.touch_distance = None
             self.touch_revert()
-
 
     # For on_touch_up
     def touch_revert(self):
@@ -195,10 +299,9 @@ class AbilityButton(Widget):
             self.current_cd = 0
             self.on_cd = False
             self.cd.cancel()
-        print(self.cd_indicator.size)
 
     def touch_handler(self, touch):
-        if in_ellipse_checker(self.center, touch.pos, self.height / 2) and \
+        if  hypot(*difference(self.center, touch.pos)) <= self.height / 2 and \
         not self.on_cd:
             self.func()
             self.current_cd = self.cool_down
@@ -206,45 +309,10 @@ class AbilityButton(Widget):
             self.on_cd = True
             self.cd = Clock.schedule_interval(self.time_step, 1/60)
 
-
-
-class Zombie(Entity):
-
-    direction = NumericProperty()
-    rotation_speed = NumericProperty(6)
-    speed = NumericProperty(40)
-
-    def __init__(self, hp=100, size=50, **kwargs):
-        super(Zombie, self).__init__(hp, size, **kwargs)
-
-    def update(self, player):
-        atan2()
-        self.move()
-
-    def move(self):
-        pass
-
-
-class AI():
-
-    def __init__(self):
-        pass
-
 class Game(Widget):
 
     def update(self, dt):
         pass
-
-    """Creates entity in the gamespace with parameter which points to dict of 
-    possible entities. The higher level determining the positions and numbers of
-    entites to spawn are done with a higher level object(?).
-    """
-    def create_entity(self, entity):
-        objects = Entity.game_entities
-        if entity not in objects.keys():
-            raise ValueError("'{}' is an invalid entity.".format(entity))
-        e = objects[entity]
-        self.entity_container.add_widget(Entity(*e))
 
 # TDS: Top Down Shooter
 class TDSApp(App):
