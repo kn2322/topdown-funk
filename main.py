@@ -1,33 +1,42 @@
 import kivy
 kivy.require('1.9.1')
 
+# TODO: Split the main file into different parts for maintainability
 from kivy.app import App
 from kivy.uix.widget import Widget
 from kivy.lang import Builder
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.graphics import Ellipse, Color
 from kivy.properties import NumericProperty, BooleanProperty, ObjectProperty, ReferenceListProperty
 from math import atan2, degrees, radians, inf, sin, cos, tan, hypot
 from functools import partial
+from collections import OrderedDict
 
 Builder.load_string("""
 #: kivy 1.9.1
 
 <Game>
-    entity_container: entity_container
     left_stick: left_stick
+    right_stick: right_stick
+    e_container: container
+    user_interface: ui
 
     EntityContainer:
-        id: entity_container
-        size: root.size
-        pos: root.pos
-    LeftStick:
-        id: left_stick
-        center: 100, 100
-    AbilityButton:
-        # Testing
-        cool_down: 6
-        center: root.width - 100, 100
+        id: container
+        size: 1, 1
+
+    UI:
+        id: ui
+        LeftStick:
+            id: left_stick
+            center: 100, 100
+        RightStick:
+            id: right_stick      
+        AbilityButton:
+            # Testing
+            cooldown: 6
+            center: root.width - 100, 100
 
 <LeftStick>
     moving_stick: moving
@@ -88,21 +97,51 @@ Builder.load_string("""
                 # First comparison is so the observer pattern doesn't go before time_step() in making the size of the circle tiny
                 # Instead of seeing the full circle from the end of the previous call
                 # size is not done using observer pattern bind
-                a: 0 if root.cool_down == root.current_cd or root.current_cd <= 0 else .3
+                a: 0 if root.cooldown == root.current_cd or root.current_cd <= 0 else .3
             Ellipse:
                 size: self.size
                 pos: self.pos
+
+<EntityContainer>
+
+<Entity>
+    canvas:
+        Ellipse:
+            size: self.size
+            pos: self.pos
 """)
 
 Window.size = (800, 600)
 
 # Container widget for all game entites, so they can be referenced by the game.
 class EntityContainer(Widget):
+
+    # A tree of app -> game -> this container and UI -> entity -> components
+
+    def __init__(self, **kwargs):
+        super(EntityContainer, self).__init__(**kwargs)
     
     # To be used in main loop with 'for i in children: if condition, destroy'
     # Additionally gold, exp, and such can be awarded here
-    def destroy(self, entity):
-        self.remove_widget(entity)
+    def update(self, game, *args):
+        for entity in self.children:
+            entity.update(game)
+
+class UI(Widget): # Considering to change this into a layout for resolution scaling.
+    
+    layout = {left}
+
+    def __init__(self, **kwargs):
+        super(UI, self).__init__(**kwargs)
+
+    # Updates all ui elements needing updates
+    def update(self, game, *args):
+        for element in self.children:
+            # Catches elements that don't have an update method.
+            try:
+                element.update(game)
+            except AttributeError:
+                continue
 
 # TODO: Rewrite/fix entity system to be more extensible and follow OOP
 # Changed to using components
@@ -148,70 +187,119 @@ class Zombie(BaseEnemy):
 """
 class Entity(Widget):
 
-    Input = ObjectProperty()
-    Physics = ObjectProperty()
-    Graphics = ObjectProperty()
-    components = ReferenceListProperty()
     velocity_x = NumericProperty()
     velocity_y = NumericProperty()
     velocity = ReferenceListProperty(velocity_x, velocity_y)
-    movement_angle = ReferenceListProperty()
 
-    def __init__(self, Input, Physics, Graphics, **kwargs):
+    def __init__(self, **kwargs):
         super(Entity, self).__init__(**kwargs)
-        for i in [Input, Physics, Graphics]:
-            self.i = i
-        movement_angle = [0, 0]
+        # 'components' uses a dict so each component can be referenced and extended.
+        # Action component is to handle the inputs for ability casting.
+        # OrderedDict allows the components to update at the correct order.
+        self.components = OrderedDict(
+            {'Input': None, 'Physics': None, 'Action': None, 'Graphics': None}
+            )
 
-    def update(self):
-        self.Input.update()
-        self.Physics.update()
-        self.Graphics.update()
-
-
-def create_hero():
-    entity = Entity(Input=HeroInputComponent(entity))
-    return entity
-
-class EmptyComponent:
-
-    def update(self):
-        pass
+    def update(self, game):
+        for name, item in self.components.items():
+            if item is None:
+                continue
+            item.update(self, game)
+ 
+def create_hero(size=(50, 50), pos=Window.center):
+    e = Entity()
+    e.size = size
+    e.center = pos
+    e.components['Input'] = HeroInputComponent()
+    e.components['Physics'] = HeroPhysicsComponent()
+    e.components['Graphics'] = HeroGraphicsComponent()
+    e.components['Action'] = HeroActionComponent()
+    # The add_widget step is not in the function, so it's decoupled.
+    return e
 
 class HeroInputComponent:
 
-    def __init__(self, obj, game):
-        self.obj = obj
-        self.game = game
+    def __init__(self):
+        # Same one as the one in left stick, used for reference by physics.
+        # This is not encapsulated and decoupled, use caution.
+        # Decimal distance of moving stick from border
+        self.touch_distance = 0
 
-    def update(self):
-        left_stick = self.game.left_stick
+    def update(self, entity, game):
+        left_stick = game.left_stick
         angle = left_stick.angle
+        self.touch_distance = left_stick.touch_distance
         # TODO: variable speed
-        # the decimal is the distance between half and full speed
-        #if left_stick.touch_distance > 0.4:
-
-        # The 'ratios' of the x and y velocities in a circle with r of 1
+        # The 'ratios' of the x and y velocities in a circle with r of 1.
         x = cos(angle)
         y = sin(angle)
-        obj.movement_angle = [x, y]
+        # Merely tells physics the direction, not the full velocity, which is processed more.
+        entity.components['Physics'].direction = [x, y]
 
 class HeroPhysicsComponent:
 
-    speed_multiplier = NumericProperty
+    def __init__(self):
+        self.direction = [0, 0]
+        # Pixels/s is the intended value,
+        self.speed_multiplier = 200
 
-    def __init__(self, obj):
-        self.obj = obj
-        # Full movement speed, pixel/s/60 updates per second
-        self.speed_multiplier = 60/60
+    def update(self, entity, game):
+        if entity.components['Input'].touch_distance <= .2:
+            # Ensures the hero does not 'slide'
+            entity.velocity = 0, 0
+            return None
+        # Multiply 'direction' with speed and divide by 60 for updates per second.
+        entity.velocity = [i * self.speed_multiplier / 60
+                             for i in self.direction]
 
-    def update(self):
-        self.obj.velocity = [i * self.speed_multiplier 
-                             for i in self.obj.movement_angle]
-        self.obj.x += self.obj.velocity_x
-        self.obj.y += self.obj.velocity_y
+    # Called in action component to allow 'Postprocessing'.
+    def move(self, entity):
+        entity.x += entity.velocity_x
+        entity.y += entity.velocity_y
+
+class HeroGraphicsComponent:
+    
+    # Mostly handled by .kv lang
+    def update(self, entity, game):
+        pass
+
+class HeroActionComponent:
+    # On hold while ability ui is being made
+    
+    def __init__(self):
+        # Functions/Objects which contain active effects, their duration,
+        self.effects = []
+
+    def update(self, entity, game):
+        for effect in self.effects:
+            # Have faith in the effects not lingering...
+            effect(entity)
+        entity.components['Physics'].move(entity)
+        print('updated')
+
+# For graphics components, returns the sprite facing direction.
+def get_direction(angle):
+    if -22.5 < angle <= 22.5:
+        return 'right'
+    elif 22.5 < angle <= 67.5:
+        return 'downright'
+    elif 67.5 < angle <= 112.5:
+        return 'down'
+    elif 112.5 < angle <= 157.5:
+        return 'downleft'
+    elif 157.5 < angle <= 180 or -180 <= angle < -157.5:
+        return 'left'
+    elif -157.5 <= angle < -112.5:
+        return 'upleft'
+    elif -112.5 <= angle < -67.5:
+        return 'up'
+    elif -67.5 <= angle < -22.5:
+        return 'upright'
+    else:
+        raise ValueError('The angle {} is out of bounds.'.format(angle))
 
 # deltay/deltax distance calculations
+# TODO: move this to a 'utils.py' or similar, and import
 def difference(pos1, pos2):
     return (pos2[0] - pos1[0], pos2[1] - pos1[1])
 
@@ -230,14 +318,13 @@ class LeftStick(Widget):
 
     def __init__(self, **kwargs):
         super(LeftStick, self).__init__(**kwargs)
-        self.moving_edge = self.height / 2
         # touch_distance will be the touch's distance from center in decimal
         # Used for hero movements
-        self.touch_distance = None
+        self.touch_distance = 0
         self.angle = 0
 
     def touch_handler(self, touch):
-        # kv doesn't init to reference moving_stick in __init__ (?)
+        # Can't reference moving_stick in __init__ (defined in kv lang)
         self.moving_edge = self.height / 2 - self.moving_stick.height / 2
         self.touch_callback(touch)
     
@@ -256,11 +343,48 @@ class LeftStick(Widget):
                 # Intense right angle trigonometry
                 # Have trust in trig functions. :p
                 # Operates on 'triangle' where the moving_edge is the hypotnuse
-                x = self.center_x + self.moving_edge * cos(angle)
-                y = self.center_y + self.moving_edge * sin(angle)
+                x = self.center_x + self.moving_edge * cos(self.angle)
+                y = self.center_y + self.moving_edge * sin(self.angle)
                 self.moving_stick.center = (x, y)
         else:
-            self.touch_distance = None
+            self.touch_revert()
+
+    # For on_touch_up
+    def touch_revert(self):
+        self.touch_distance = 0
+        self.moving_stick.center = self.center
+
+# Repeating code...
+class RightStick(Widget):
+
+    moving_edge = NumericProperty()
+
+    def __init__(self, **kwargs):
+        super(RightStick, self).__init__(**kwargs)
+        self.angle = 0
+
+    def touch_handler(self, touch):
+        # Can't reference moving_stick in __init__ (defined in kv lang)
+        self.moving_edge = self.height / 2 - self.moving_stick.height / 2
+        self.touch_callback(touch)
+    
+    # For on_touch_move
+    # TODO: remove gradient/unecessary components
+    def touch_callback(self, touch):
+        if touch.x > Window.width / 2:
+            delta = difference(self.center, touch.pos)
+            self.angle = atan2(delta[1], delta[0])
+            # checks for touch collision with the control stick
+            if hypot(*difference(self.center, touch.pos)) <= self.moving_edge:
+                self.moving_stick.center = touch.pos
+            else:
+                # Intense right angle trigonometry
+                # Have trust in trig functions. :p
+                # Operates on 'triangle' where the moving_edge is the hypotnuse
+                x = self.center_x + self.moving_edge * cos(self.angle)
+                y = self.center_y + self.moving_edge * sin(self.angle)
+                self.moving_stick.center = (x, y)
+        else:
             self.touch_revert()
 
     # For on_touch_up
@@ -269,50 +393,55 @@ class LeftStick(Widget):
 
 class AbilityButton(Widget):
 
-    cool_down = NumericProperty()
+    cooldown = NumericProperty()
     current_cd = NumericProperty()
     on_cd = BooleanProperty()
 
     # Functions to be accepted with *args with tuple which has func and its cd.
     # Purpose: So that the button's behavior is able to be swapped out depending on hero.
-    def __init__(self, func=partial(print, 'there is no function'), cool_down=0, **kwargs):
+    def __init__(self, **kwargs):
         super(AbilityButton, self).__init__(**kwargs)
-        self.func = func
-        self.cool_down = cool_down
         self.current_cd = 0
         self.on_cd = False
         
-    def assign(self, func, cool_down):
-        self.func = func
-        self.cool_down = cool_down
+    def assign_function(self, ability):
+        self.ability = ability
+        self.cooldown = self.ability.cooldown
 
-    def time_step(self, dt):
+    def update(self, game):
+        # Breaks out of the loop if the ability isn't on cooldown.
+        if not self.on_cd:
+            return None
+
         if round(self.current_cd, 3) > 0:
             self.current_cd -= 1/60
             # Function to make the size of cd_indicator grow at constant rates until original size depending on cd
             # The indicator is updated here to allow for more explicit logic instead of observer pattern via kv
             self.cd_indicator.size = tuple(
-                -i / self.cool_down * self.current_cd + i for i in self.size
+                -i / self.cooldown * self.current_cd + i for i in self.size
                 )
             self.cd_indicator.center = self.center
         else:
             self.current_cd = 0
             self.on_cd = False
-            self.cd.cancel()
 
     def touch_handler(self, touch):
-        if  hypot(*difference(self.center, touch.pos)) <= self.height / 2 and \
+        if hypot(*difference(self.center, touch.pos)) <= self.height / 2 and \
         not self.on_cd:
-            self.func()
-            self.current_cd = self.cool_down
+            self.ability()
+            self.current_cd = self.cooldown
             # on_cd is to prevent multiple activations of the button while on cd
             self.on_cd = True
-            self.cd = Clock.schedule_interval(self.time_step, 1/60)
 
 class Game(Widget):
 
+    def __init__(self, **kwargs):
+        super(Game, self).__init__(**kwargs)
+        self.e_container.add_widget(create_hero())
+
     def update(self, dt):
-        pass
+        self.e_container.update(self)
+        self.user_interface.update(self)
 
 # TDS: Top Down Shooter
 class TDSApp(App):
