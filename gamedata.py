@@ -1,6 +1,5 @@
 from kivy.clock import Clock
 from kivy.vector import Vector
-from collections import namedtuple
 
 """A baseclass for all of the active abilities in the game,
 each ability is put into a data structure representing the category of it
@@ -37,10 +36,11 @@ class SuperSpeed(ActiveAbility):
 
 	description = 'Gain a speed up for a short duration.'
 	category = 'utility'
-	dataformat = namedtuple('Level', 'cooldown duration magnitude')
+	"""data in the format of 'level cooldown duration magnitude'
+	"""
 	data = [
-			Level(5, 3, .3), # level 0
-			Level(5, 3, .45) # level 1, etc.
+			(5, 3, .3), # level 0
+			(5, 3, .45) # level 1, etc.
 			]
 	def __init__(self, level=0):
 		self.level = level
@@ -87,7 +87,7 @@ class SpeedUp:
 
 	def __call__(self, entity):
 		if self.time_left <= 0:
-			entity.components['Action'].effects.remove[self]
+			entity.components['Action'].effects.remove(self)
 		self.time_left -= 1/60
 		# As of now cannot handle multiple buffs stacked on top of eachother
 		# without going crazy :p.
