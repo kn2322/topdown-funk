@@ -23,4 +23,4 @@ def center_cam(camera, target):
 	return None
 
 if __name__ == '__main__':
-	print('do jack shit')
+	print('Here comes dat boi.')

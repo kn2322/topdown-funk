@@ -1,4 +1,5 @@
 from kivy.vector import Vector
+from math import hypot
 
 """Module used to contain utility functions used for processing in the game.
 """
@@ -31,7 +32,15 @@ def get_direction(angle):
 
 # For circular collision detection
 def circle_collide(a, b):
-    return Vector(*a.pos).distance(b) <= a.width + b.width
+    return hypot(*difference(a.center, b.center)) <= a.width + b.width
+
+# Gets x, y direction towards target.
+def get_dir_to(entity, other):
+        delta = difference(entity.center, other.center)
+        angle = atan2(delta[1], delta[0])
+        x = cos(angle)
+        y = sin(angle)
+        return [x, y]
 
 if __name__ == '__main__':
 	print('To shreds, you say?')

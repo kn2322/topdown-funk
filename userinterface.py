@@ -2,16 +2,21 @@ from kivy.lang import Builder
 from kivy.uix.widget import Widget
 from kivy.graphics import Line, Ellipse, Rectangle, Color
 from math import atan2, hypot, cos, sin
-from utilfuncs import difference
 from kivy.properties import NumericProperty, BooleanProperty
 from kivy.vector import Vector
 from kivy.core.window import Window
+from utilfuncs import difference
 
 """Module used to contain all of the ui elements in the game, to avoid cluttering
 the main file
 """
 
 Builder.load_string("""
+<UI>
+    HealthBar:
+        center: root.center_x, root.top - 50
+
+
 <LeftStick>
     moving_stick: moving
 
@@ -38,7 +43,7 @@ Builder.load_string("""
         id: moving
         # args[1] is the touch object, important.
         on_touch_down: root.touch_handler(args[1])
-        on_touch_move: root.touch_callback(args[1])
+        on_touch_move: root.touch_handler(args[1])
         on_touch_up: root.touch_revert()
         center: root.center
         size: 40, 40
@@ -66,24 +71,52 @@ Builder.load_string("""
         id: cd_indicator
         size: 1, 1
         center: root.center
-        canvas:
-            Color:
-                # First comparison is so the observer pattern doesn't go before time_step() in making the size of the circle tiny
-                # Instead of seeing the full circle from the end of the previous call
-                # size is not done using observer pattern bind
-                a: 0 if root.cooldown == root.current_cd or root.current_cd <= 0 else .3
-            Ellipse:
-                size: self.size
-                pos: self.pos
+
+<HealthBar>
+    size: 200, 50
+    canvas:
+        Color:
+            rgb: .5, .5, .5
+        Rectangle:
+            size: self.size
+            pos: self.pos
+        Color:
+            rgb: .5, 0, 0
+        Rectangle:
+            # unreadable, but basically doesn't let the bar go negative
+            size: self.width * self.hp / self.max_hp if self.width * self.hp / self.max_hp > 0 else 0, self.height
+            pos: self.pos
+
+    Label:
+        size: root.size
+        pos: root.pos
+        text: '{} / {}'.format(root.hp, root.max_hp)
 """)
 
 class UI(Widget): # Considering to change this into a layout for resolution scaling.
     
     def __init__(self, **kwargs):
         super(UI, self).__init__(**kwargs)
+        self.left_stick = LeftStick(center=(self.x+100,self.y+100))
+        self.right_stick = RightStick()
+        # Slots for utility abilities.
+        self.slots = [
+            # Locational values to be tested, slot is so it can reference itself.
+            AbilityButton(slot=0, center=(Window.width-100, 100)),
+            AbilityButton(slot=1, center=(Window.width-100, 300))
+        ]
+        self.add_widget(self.left_stick)
+        self.add_widget(self.right_stick)
 
     # Updates all ui elements needing updates
     def update(self, game, *args):
+        # Adds button when there is an ability.
+        for slot in self.slots:
+            if slot not in self.children:
+                slot.update(game)
+                if slot.ability is not None:
+                    self.add_widget(slot)
+        # For checking whether or not the ability exists, to bypass looping in self.children, since before the ability exists, the button is NOT added to the UI.
         for element in self.children:
             # Catches elements that don't have an update method.
             try:
@@ -101,15 +134,15 @@ class LeftStick(Widget):
         # Used for hero movements
         self.touch_distance = 0
         self.angle = 0
+        # The stick starts on bottom left of left stick, so this is a workaround.
+        self.moving_stick.center = self.center
 
+    # For on_touch_move
+    # TODO: remove gradient/unecessary components
     def touch_handler(self, touch):
         # Can't reference moving_stick in __init__ (defined in kv lang)
         self.moving_edge = self.height / 2 - self.moving_stick.height / 2
-        self.touch_callback(touch)
-    
-    # For on_touch_move
-    # TODO: remove gradient/unecessary components
-    def touch_callback(self, touch):
+
         if touch.x < Window.width / 2:
             delta = difference(self.center, touch.pos)
             self.angle = atan2(delta[1], delta[0])
@@ -137,11 +170,31 @@ class RightStick(Widget):
 
     def __init__(self, **kwargs):
         super(RightStick, self).__init__(**kwargs)
+        self.radius = 200
         self.size = 1, 1
-        self.graphics = lambda self: Line(width=1.5, circle=(*self.center, 200))
+        # graphical representation function, as the circle can't be referenced with pos.
+        def g(self):
+            return Line(width=1.5, circle=(*self.center, self.radius))
+        self.graphics = g
+        # None so conditions in which direction to face can be done with if rightstick.angle...
+        self.angle = None
+
+    def on_touch_down(self, touch):
+        self.touch_handler(touch)
+
+    def on_touch_move(self, touch):
+        self.touch_handler(touch)
+
+    def on_touch_up(self, touch):
+        self.angle = None
+
+    def touch_handler(self, touch):
+        d = difference(self.center, touch.pos)
+        if hypot(*d) <= self.radius:
+            self.angle = atan2(d[1], d[0])
 
     def update(self, game):
-        self.center = Vector(game.player.center) + Vector(game.camera.offset)
+        self.center = game.user_interface.center
         self.canvas.clear()
         self.canvas.add(Color(1, 0, 0, .5))
         self.canvas.add(self.graphics(self))
@@ -149,42 +202,47 @@ class RightStick(Widget):
 class AbilityButton(Widget):
 
     cooldown = NumericProperty()
-    current_cd = NumericProperty()
-    on_cd = BooleanProperty()
 
     # Functions to be accepted with *args with tuple which has func and its cd.
     # Purpose: So that the button's behavior is able to be swapped out depending on hero.
-    def __init__(self, **kwargs):
+    def __init__(self, slot, **kwargs):
         super(AbilityButton, self).__init__(**kwargs)
-        self.current_cd = 0
-        self.on_cd = False
-        
-    def assign_function(self, ability):
-        self.ability = ability
-        self.cooldown = self.ability.cooldown
+        self.slot = slot
+        self.ability = None
 
     def update(self, game):
         self.player = game.player
-        # Breaks out of the loop if the ability isn't on cooldown.
-        if not self.on_cd:
+        self.ability = self.player.components['Action'].slots[self.slot]
+        if self.ability is None:
             return None
+        current_cd = self.ability.current_cd
 
-        if round(self.current_cd, 3) > 0:
-            self.current_cd -= 1/60
+        if current_cd > 0:
             # Function to make the size of cd_indicator grow at constant rates until original size depending on cd
-            # The indicator is updated here to allow for more explicit logic instead of observer pattern via kv
+            # The indicator is updated here to allow for more explicit logic instead of observer pattern via kv.
             self.cd_indicator.size = tuple(
-                -i / self.cooldown * self.current_cd + i for i in self.size
+                -i / self.ability.cooldown * current_cd + i for i in self.size
                 )
             self.cd_indicator.center = self.center
+            self.cd_indicator.canvas.clear()
+            with self.cd_indicator.canvas:
+                Color(a=0.3)
+                Ellipse(size=self.cd_indicator.size, pos=self.cd_indicator.pos)
         else:
-            self.current_cd = 0
-            self.on_cd = False
+            self.cd_indicator.canvas.clear()
 
     def touch_handler(self, touch):
         if hypot(*difference(self.center, touch.pos)) <= self.height / 2 and \
-        not self.on_cd:
-            self.ability(self.player)
-            self.current_cd = self.cooldown
-            # on_cd is to prevent multiple activations of the button while on cd
-            self.on_cd = True
+        self.ability.current_cd <= 0:
+            self.ability.activate(self.player)
+
+# Temporary health bar before final health bar system is decided.
+class HealthBar(Widget):
+
+    max_hp = NumericProperty(1)
+    hp = NumericProperty(1)
+
+    def update(self, game):
+        player = game.player
+        self.max_hp = player.max_hp
+        self.hp = player.hp
