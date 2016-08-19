@@ -9,7 +9,6 @@ from kivy.core.window import Window
 from functools import partial
 from utilfuncs import difference, get_direction, circle_collide
 import camera
-import abilitydata
 import chardata as char
 import userinterface
 import mapinfo
@@ -118,7 +117,6 @@ class Game(Widget):
         self.map_size = self.game_map.size
 
         self.player = char.create_hero((100, 100))
-        self.player.assign_util_ability(abilitydata.SuperSpeed(0))
 
         self.e_container.add_entity(self.player)
         self.camera = camera.Camera(Window.size, camera.center_cam)

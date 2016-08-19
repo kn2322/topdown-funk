@@ -54,24 +54,6 @@ Builder.load_string("""
                 size: self.size
                 pos: self.pos
 
-<AbilityButton>
-    cd_indicator: cd_indicator
-
-    Widget:
-        on_touch_down: root.touch_handler(args[1])
-        size: root.size
-        center: root.center
-        canvas:
-            Color:
-                rgba: 0, 0, 1, 1
-            Ellipse:
-                size: self.size
-                pos: self.pos
-    Widget:
-        id: cd_indicator
-        size: 1, 1
-        center: root.center
-
 <HealthBar>
     size: 200, 50
     canvas:
@@ -92,30 +74,51 @@ Builder.load_string("""
         pos: root.pos
         text: '{} / {}'.format(root.hp, root.max_hp)
 """)
+# For the old circular ability button.
+"""
+<AbilityButton>
+    cd_indicator: cd_indicator
 
-class UI(Widget): # Considering to change this into a layout for resolution scaling.
+    Widget:
+        on_touch_down: root.touch_handler(args[1])
+        size: root.size
+        center: root.center
+        canvas:
+            Color:
+                rgba: 0, 0, 1, 1
+            Ellipse:
+                size: self.size
+                pos: self.pos
+    Widget:
+        id: cd_indicator
+        size: 1, 1
+        center: root.center
+"""
+
+class UI(Widget): # Change this into a layout for resolution scaling.
     
     def __init__(self, **kwargs):
         super(UI, self).__init__(**kwargs)
         self.left_stick = LeftStick(center=(self.x+100,self.y+100))
         self.right_stick = RightStick()
-        # Slots for utility abilities.
+        # 'Slots' for utility abilities/buttons.
         self.slots = [
-            # Locational values to be tested, slot is so it can reference itself.
+            # Center positions of ability buttons
             AbilityButton(slot=0, center=(Window.width-100, 100)),
-            AbilityButton(slot=1, center=(Window.width-100, 300))
+            AbilityButton(slot=1, center=(Window.width-100, 100))
         ]
         self.add_widget(self.left_stick)
         self.add_widget(self.right_stick)
 
     # Updates all ui elements needing updates
     def update(self, game, *args):
-        # Adds button when there is an ability.
-        for slot in self.slots:
-            if slot not in self.children:
-                slot.update(game)
-                if slot.ability is not None:
-                    self.add_widget(slot)
+        player_a = game.player.components['Action']
+        # Adds button when there is an assigned ability, doesn't account for removing buttons.
+        for slot, a in enumerate(player_a.abilities):
+            if a is None:
+                continue
+            if self.slots[slot] not in self.children:
+                self.add_widget(self.slots[slot])
         # For checking whether or not the ability exists, to bypass looping in self.children, since before the ability exists, the button is NOT added to the UI.
         for element in self.children:
             # Catches elements that don't have an update method.
@@ -192,13 +195,15 @@ class RightStick(Widget):
         d = difference(self.center, touch.pos)
         if hypot(*d) <= self.radius:
             self.angle = atan2(d[1], d[0])
+        else:
+            self.angle = None
 
     def update(self, game):
         self.center = game.user_interface.center
         self.canvas.clear()
         self.canvas.add(Color(1, 0, 0, .5))
         self.canvas.add(self.graphics(self))
-
+"""
 class AbilityButton(Widget):
 
     cooldown = NumericProperty()
@@ -234,6 +239,57 @@ class AbilityButton(Widget):
     def touch_handler(self, touch):
         if hypot(*difference(self.center, touch.pos)) <= self.height / 2 and \
         self.ability.current_cd <= 0:
+            self.ability.activate(self.player)
+"""
+class AbilityButton(Widget):
+
+    cooldown = NumericProperty(1)
+
+    # Purpose: So that the button's behavior is able to be swapped out depending on hero.
+    def __init__(self, slot, **kwargs):
+        super(AbilityButton, self).__init__(**kwargs)
+        self.slot = slot
+        self.ability = None
+
+    def on_touch_down(self, touch):
+        # Button down animation
+        pass
+
+    def on_touch_move(self, touch):
+        # Change animation if hand slides off to other button
+        pass
+
+    def on_touch_up(self, touch):
+        # Activate button
+        self.touch_handler(touch)
+
+    def update(self, game):
+        self.player = game.player
+        self.ability = self.player.components['Action'].abilities[self.slot]
+
+        # Handles counting down cd, previously handled in action components...
+        self.ability.time_step()
+
+        current_cd = self.ability.cooldown.current
+        
+        self.canvas.clear()
+        # Graphics are updated here to be more explicit than kv lang, and works.
+        with self.canvas:
+            Color(rgb=(0,0,1))
+            Rectangle(pos=self.pos, size=self.size)
+        if current_cd > 0:
+            # Function for width being proportional to cd.
+            cd_width = (self.ability.cooldown.current / self.ability.cooldown.default) * self.width
+            cd_indicator_size = (
+                cd_width if self.ability.cooldown.current > 0 else 0,
+                self.height
+                )
+            with self.canvas:
+                Color(a=0.3)
+                Rectangle(size=cd_indicator_size, pos=self.pos)
+
+    def touch_handler(self, touch):
+        if self.collide_point(*touch.pos) and self.ability.cooldown.current <= 0:
             self.ability.activate(self.player)
 
 # Temporary health bar before final health bar system is decided.

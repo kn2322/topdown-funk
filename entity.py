@@ -66,10 +66,6 @@ class Entity(Widget):
                 continue
             item.update(self, game)
 
-    # Calls the one in the action component, probably redundant.
-    def assign_util_ability(self, ability):
-        self.components['Action'].assign_util_ability(ability)
-
     def collide(self, other, entity_container):
         self.components['Action'].collide(self, other, entity_container)
 

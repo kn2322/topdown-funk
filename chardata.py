@@ -4,7 +4,7 @@ from kivy.graphics import Ellipse
 from kivy.graphics.instructions import InstructionGroup as IG
 from math import sin, cos, atan2
 from utilfuncs import circle_collide, difference
-from abilitydata import DamageInfo, Invincibility
+from abilitydata import DamageInfo, Cooldown, Invincibility, SuperSpeed
 from entity import Entity
 
 """Module used to contain all of the character components in the game
@@ -200,36 +200,38 @@ class HeroActionComponent(ActionComponent):
     
     def __init__(self):
         super(HeroActionComponent, self).__init__()
-        self.slots = [None, None]
-        self.basic_attack_speed = 0
-        self.basic_attack_cd = 0
+        self.abilities = [None, None]
+        # Using cooldown object to reduce number of variables
+        self.basic_attack_cd = Cooldown(0)
 
     def assign_util_ability(self, ability):
-        for idx, slot in enumerate(self.slots):
+        for idx, slot in enumerate(self.abilities):
             if slot is None:
-                self.slots[idx] = ability
+                self.abilities[idx] = ability
                 return None
 
     def update(self, entity, game):
         super(HeroActionComponent, self).update(entity, game)
-        self.basic_attack_speed = entity.attack_speed
-        for slot in self.slots:
-            if slot is not None:
-                if slot.current_cd > 0:
-                    slot.time_step()
+        self.basic_attack_cd.default = entity.attack_speed
+        for ability in self.abilities:
+            try:
+                ability.time_step()
+            except AttributeError:
+                continue
         self.activate_right(entity, game)
 
     # Needs to know game for both ui and e_container
+    # Used for handling cooldowns and conditions for basic attack.
     def activate_right(self, entity, game):
         angle = game.user_interface.right_stick.angle
         # Angle is None if touch is not pressed.
-        if angle and self.basic_attack_cd <= 0:
+        if angle and self.basic_attack_cd.current <= 0:
             a = create_hero_projectile(entity.center)
             a.components['Physics'].direction = [cos(angle), sin(angle)]
             game.e_container.add_entity(a)
-            self.basic_attack_cd = self.basic_attack_speed * 60
+            self.basic_attack_cd.activate()
         else:
-            self.basic_attack_cd -= 1
+            self.basic_attack_cd.time_step()
 
     def collide(self, entity, other, entity_container):
         if other.name in entity_container.enemies:
@@ -388,11 +390,13 @@ def create_hero(center, size=(20, 20)):
     e.components['Physics'] = HeroPhysicsComponent()
     e.components['Graphics'] = HeroGraphicsComponent()
     e.components['Action'] = HeroActionComponent()
+    e.components['Action'].assign_util_ability(SuperSpeed())
     # The add_widget step is not in the function, so it's decoupled.
     return e
 
 def create_hero_projectile(center, size=(25, 25)):
-    e = Entity(center=center, size=size)
+    e = Entity(size=size)
+    e.center = center
     chardata = {'name': 'test_projectile', 'max_hp': 1, 'hp': 1,
         'velocity_multiplier': 700, 'can_be_damaged': False
         }

@@ -13,10 +13,8 @@ class ActiveAbility:
 	"""Each ability is assigned to a button, and __init__ contains attributes
 	that can change from leveling up
 	"""
-	def __init__(self, level=0):
-		self.level = level
-		self.cooldown = 0
-		self.current_cd = 0
+	def __init__(self):
+		self.cooldown = Cooldown(0)
 
 	# Returns the printable name of ability.
 	# For in tool tips, level ups, etc.
@@ -31,6 +29,10 @@ class ActiveAbility:
 	# Use this instead of __call__, slightly more readable.
 	def activate(self, entity):
 		pass
+
+	# counting down cd.
+	def time_step(self):
+		self.cooldown.time_step()
 
 	def get_desc(self):
 		return self.description
@@ -51,6 +53,27 @@ class DamageInfo:
 		else:
 			raise ValueError('{} is not a valid damage type'.format(dmg_type))
 
+class Cooldown:
+
+	def __init__(self, default_cd):
+		self.default = default_cd # in seconds
+		self.current = 0
+
+	# Called in ability activate methods.
+	def activate(self):
+		self.current = self.default
+
+	def time_step(self):
+		self.current -= 1/60
+
+# BasicAttack
+# Not sure if useful to add another layer of abstraction.
+# Not in use
+class TestBA(ActiveAbility):
+
+	def activate(self, entity):
+		pass
+
 class SuperSpeed(ActiveAbility):
 
 	description = 'Gain a speed up for a short duration.'
@@ -58,17 +81,15 @@ class SuperSpeed(ActiveAbility):
 	"""data in the format of 'level #cooldown duration magnitude'
 	"""
 	data = [
-			(5, 3, 1.3), # level 0
+			(5, 1.5, 6), # level 0
 			(5, 3, 1.45) # level 1, etc.
 			]
 	def __init__(self, level=0):
 		self.level = level
-		self.cooldown = 0
+		self.cooldown = Cooldown(0)
 		self.duration = 0
 		self.magnitude = 0
 		self.effect = SpeedUp
-		# Tangible cooldown to be subtracted.
-		self.current_cd = 0
 		self.update_level()
 
 	def __str__(self):
@@ -85,10 +106,11 @@ class SuperSpeed(ActiveAbility):
 
 	# As of now, it extends the effect from this skill if the skill is called again when its effect is still active
 	def activate(self, entity):
+		# Equivalent to self.cooldown.current = self.cooldown.default
+		self.cooldown.activate()
+
 		args = self.data[self.level]
 		a = entity.components['Action']
-		# cd counter has started, time_step is called in the entity (not sure if best).
-		self.current_cd = self.cooldown
 		for i in a.effects:
 			# Refreshes buff if the duration and cooldown happens to overlap
 			if type(i) is type(self.effect) and i.origin_id == self:
@@ -96,15 +118,9 @@ class SuperSpeed(ActiveAbility):
 				return None
 		a.effects.append(self.effect(self, self.duration, self.magnitude))
 
-	# For counting down cooldown.
-	def time_step(self):
-		self.current_cd -= 1
-
 	# For updating effects when self.level variable is changed, and __init__
 	def update_level(self):
-		self.cooldown, self.duration, self.magnitude = self.data[self.level]
-		# Convert seconds to frames
-		self.cooldown *= 60
+		self.cooldown.default, self.duration, self.magnitude = self.data[self.level]
 
 """Below here is the ability effects.
 """
@@ -123,7 +139,7 @@ class Effect:
 
 	def __init__(self, origin_id, duration):
 		self.origin_id = origin_id # origin is the source of the effect, used for stacking effects properly
-		self.duration = duration * 60 # In frames
+		self.duration = duration # In frames
 
 	# idk if this will appear in the game
 	def __str__(self):
@@ -135,7 +151,7 @@ class Effect:
 
 	# Called when updating action component, used for counting cooldown
 	def time_step(self):
-		self.duration -= 1
+		self.duration -= 1/60
 
 	# Mode system is replaced by two separate functions, to be more explicit.
 	def m_apply_modifier(self, attribute_id, val):
@@ -164,7 +180,7 @@ class SpeedUp(Effect):
 
 	def __init__(self, origin_id, duration, magnitude):
 		self.origin_id = origin_id
-		self.duration = duration * 60
+		self.duration = duration
 		self.magnitude = magnitude
 
 		self.m_modifier_list = {'velocity_multiplier': self.magnitude}
@@ -178,7 +194,7 @@ class Invincibility(Effect):
 
 	def __init__(self, origin_id, duration):
 		self.origin_id = origin_id
-		self.duration = duration * 60
+		self.duration = duration
 
 		self.spec_modifier_list = {'can_be_damaged': lambda *args: False}
 
