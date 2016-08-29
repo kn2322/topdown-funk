@@ -1,11 +1,11 @@
 from kivy.vector import Vector
 from kivy.graphics import Ellipse
-# Note the as IG.
-from kivy.graphics.instructions import InstructionGroup as IG
-from math import sin, cos, atan2
+from kivy.clock import Clock
+from math import sin, cos, atan2, hypot
 from utilfuncs import circle_collide, difference
 from abilitydata import DamageInfo, Cooldown, Invincibility, SuperSpeed
 from entity import Entity
+from functools import partial
 
 """Module used to contain all of the character components in the game
 """
@@ -18,20 +18,20 @@ class PhysicsComponent:
     def __init__(self):
         # direction is a value received from the input component indicating direction of movement.
         self.direction = [0, 0]
+        self.total_velocity = [0, 0] # imperative movement + displacement.
+        self.time = False
+        """
+        # The controlled movement velocity.
+        self.c_velocity = [0, 0]
+        """
 
     def update(self, entity, game):
-        get_value = entity.components['Action'].get_value
-        multiplier = get_value(entity, 'velocity_multiplier')
-        # Multiply 'direction' with speed and divide by 60 for updates per second.
-        entity.velocity = [i * multiplier / 60
-                             for i in self.direction]
-        next_pos = Vector(*entity.pos) + Vector(*entity.velocity)
-        self.move(entity, next_pos, game.map_size)
+        self.move(entity, game)
 
     # Called in action component to allow 'Postprocessing'. RESOLVED with get_value()
     # next_pos is a universal moving interface that checks for map boundaries when moving an entity.
     # This could be moved to entity container, and call individual entity behaviour when e.g. hitting the walls.
-    def move(self, entity, next_pos, map_size):
+    def temp_move(self, entity, next_pos, map_size):
         bounds = map_size
         outx, outy = entity.pos
         # Compares x and y borders individually to allow sliding along the border.
@@ -51,6 +51,64 @@ class PhysicsComponent:
 
         entity.pos = outx, outy
 
+    # For the physics interactions with colliding entity.
+    def collide_entity(self, entity, other, entity_container): # Returns next position.
+        return self.separate(entity, other)
+
+    """Returns next_pos where objects don't intersect, recommend to call this first
+    in collision resolving.
+    """
+    def separate(self, entity, other):
+        v = self.total_velocity # Total, adding displacement and imperative movement.
+        """ Theory, find the amount to add to the currrent entity position so that
+        it is exactly colliding with the other using circle_collide,
+        which is hypot(*difference(a.center, b.center)) == a.width + b.width.
+        In an eqn where x is the coefficient (time) for the total velocity so that it
+        fulfills the exact collision. NOT WORKING
+
+        New, calculate overlapping distance by subtracting distance of two entities from the sum of
+        the radii. Then move back by the current direction * depth.
+        """
+        diff = difference(entity.pos, other.pos)
+        depth = (entity.width + other.width) / 2 - hypot(*diff) # Overlapping distance
+        min_pv = Vector(*diff).normalize() * depth # Min penetrating vector using current velocity vector (not actually minimum)
+        next_pos = Vector(*entity.pos) + (v - min_pv)
+        return next_pos
+
+    # Wall colliding behaviour.
+    def collide_wall(self, entity, map_size):
+        pass
+
+    def move_to_mapborder(self, entity, map_size): # Handles the edge of the map.
+        pass
+
+    def move(self, entity, game):
+        get_value = entity.components['Action'].get_value
+        multiplier = get_value(entity, 'velocity_multiplier')
+        # Multiply 'direction' with speed and divide by 60 for updates per second.
+        controlled_movement = Vector(self.direction) * (multiplier / 60)
+        self.total_velocity = Vector(*controlled_movement) + Vector(*entity.velocity)
+        next_pos = Vector(*entity.pos) + self.total_velocity
+
+        # Checks for collision with all types, keeps recalculating physics until there are no more collisions,
+        # makes entity move up to the border of an entity it collides with, while the collision funcs define behaviour afterwards.
+
+        # This block is currently bugged beyond belief.
+
+        e_container = game.e_container
+        
+        for e in e_container.children:
+            
+            if circle_collide(entity, e):
+                # Resolves the physics portion of the collision.
+                next_pos = self.collide_entity(entity, e, e_container)
+                
+                # Collide for both entities MUST be called, otherwise your own collision will only be called when you move.
+                entity.components['Action'].collide(entity, e, e_container)
+                e.components['Action'].collide(e, entity, e_container)
+        
+        entity.pos = next_pos
+        
 # Convert center pos to actual pos for canvas instructions.
 def center_to_pos(size, pos):
     return Vector(*pos) - Vector(*size) / 2
@@ -95,14 +153,15 @@ class ActionComponent:
     def update(self, entity, game):
         if entity.hp <= 0:
             # Destroy is provisional here, exp and other systems have not been added.
-            self.destroy(entity, game.e_container)
+            self.destroy(entity, game)
         for effect in self.effects:
             effect.time_step()
             if effect.duration <= 0:
                 self.effects.remove(effect)
 
-    def destroy(self, entity, entity_container):
-        entity_container.remove_widget(entity)
+    def destroy(self, entity, game):
+        game.player.receive_exp(entity.exp) # Giving player exp.
+        game.e_container.remove_widget(entity)
     """The universal value getter used in all components, although the __dict__
     might (probably not) need to be changed, since it doesn't apply to any
     attributes in the widget class.
@@ -139,7 +198,19 @@ class ActionComponent:
     effects are applied, before lowering the hp.
     """
     def on_receive_damage(self, entity, damage_info):
-        entity.hp -= damage_info.amount
+        #print('damaged, %s' % self.get_value(entity, 'can_be_damaged'))
+        if self.get_value(entity, 'can_be_damaged'):
+            entity.hp -= damage_info.amount
+        #attacker = damage_info.attacker
+
+    """ Changed system to globallly accessible player exp, and adding to that.
+        if entity.hp <= 0 and True: # attacker.name in EntityContainer.players -> Not implemented bc entity container needs to be moduled and imported. I think is Singleton.
+            # Destruction not handled here to allow for better overriding (?), decorators may be applicable here.
+            attacker.receive_exp(entity.exp) # If action component contained exp.
+
+    def on_receive_exp(self, entity, amount):
+        pass
+    """
 
 
 """The character input component only handles the movement stick, and not the
@@ -158,7 +229,7 @@ class HeroInputComponent(InputComponent):
     def update(self, entity, game):
         self.basic_attack_speed = entity.attack_speed
         ui = game.user_interface
-        self.activate_left(entity, ui.left_stick)
+        self.activate_left(entity, ui.left_ui.left_stick)
 
     def activate_left(self, entity, left_stick):
         angle = left_stick.angle
@@ -171,21 +242,10 @@ class HeroInputComponent(InputComponent):
 
 class HeroPhysicsComponent(PhysicsComponent):
 
-    def __init__(self):
-        self.direction = [0, 0]
-
     def update(self, entity, game):
         if entity.components['Input'].touch_distance <= .7:
-            # Ensures the hero does not 'slide'
-            entity.velocity = 0, 0
             return None
-        get_value = entity.components['Action'].get_value
-        multiplier = get_value(entity, 'velocity_multiplier')
-        # Multiply 'direction' with speed and divide by 60 for updates per second.
-        entity.velocity = [i * multiplier / 60
-                             for i in self.direction]
-        next_pos = Vector(*entity.pos) + Vector(*entity.velocity)
-        self.move(entity, next_pos, game.map_size)
+        self.move(entity, game)
 
     # TODO: Add displacement/knockback
 
@@ -203,6 +263,8 @@ class HeroActionComponent(ActionComponent):
         self.abilities = [None, None]
         # Using cooldown object to reduce number of variables
         self.basic_attack_cd = Cooldown(0)
+        self.exp = 0
+        self.levels = (0, 0, 0) # Level increments.
 
     def assign_util_ability(self, ability):
         for idx, slot in enumerate(self.abilities):
@@ -234,11 +296,25 @@ class HeroActionComponent(ActionComponent):
             self.basic_attack_cd.time_step()
 
     def collide(self, entity, other, entity_container):
+        pass
+        """ Deprecated because of becoming invincible before receiving damage, functionality moved to on_receive_damage.
         if other.name in entity_container.enemies:
-            for i in self.effects:
-                if type(i) is Invincibility:
-                    return None
+            if Invincibility in (type(i) for i in self.effects):
+                return None
+            def append(itm, dt): self.effects.append(itm)
+            effect = partial(append, Invincibility(self, 1.5))
+            Clock.schedule_once(effect, -1)
+        """
+
+    def on_receive_damage(self, entity, damage_info):
+        #print('damaged, %s' % self.get_value(entity, 'can_be_damaged'))
+        if self.get_value(entity, 'can_be_damaged'):
+            entity.hp -= damage_info.amount
             self.effects.append(Invincibility(self, 1.5))
+
+    def on_receive_exp(self, entity, amount): # Unique to player action component.
+        print('Player has received {} exp'.format(amount))
+        self.exp += amount
 
 """Below this point are enemy components.
 """
@@ -327,7 +403,6 @@ class RiotPoliceActionComponent(ActionComponent):
 
     def __init__(self):
         super(RiotPoliceActionComponent, self).__init__()
-        # IF ATTRIBUTE IS UNIQUE IT WILL CAUSE BUGS WHEN DAMAGE INCREASE EFFECT IS APPLIED.
         # Proposition: make the contact_damage 'derive' from a base damage, so all damage from an entity is changed when dmg is changed.
         # self.contact_damage = 1
         # Moved to main entity
@@ -345,10 +420,14 @@ class RiotPoliceActionComponent(ActionComponent):
 Each one will have a comment as to what entity(s) it belongs to.
 """
 
+class HeroProjectilePhysicsComponent(PhysicsComponent):
+
+    def collide_entity(self, entity, other, entity_container): # Overridden bc projectile is destroyed on contact with enemy.
+        return Vector(*entity.pos) + self.total_velocity
+
 class HeroProjectileGraphicsComponent(GraphicsComponent):
 
     pass
-
 
 # Belongs to the 'Hero' or 'test_hero' entity, as a projectile to fire.
 class HeroProjectileActionComponent(ActionComponent):
@@ -382,7 +461,7 @@ def create_hero(center, size=(20, 20)):
     # TODO: Add error checking if the name is not in any valid names.
     e = Entity(center=center, size=size)
     chardata = {'name': 'test_hero', 'max_hp': 20, 'hp': 20, 
-        'velocity_multiplier': 650, 'attack_speed': 1.5
+        'velocity_multiplier': 450, 'attack_speed': 1.5
         }
     for key, val in chardata.items():
         e.__dict__[key] = val
@@ -403,7 +482,7 @@ def create_hero_projectile(center, size=(25, 25)):
     for key, val in chardata.items():
         e.__dict__[key] = val
     e.components['Input'] = None
-    e.components['Physics'] = PhysicsComponent()
+    e.components['Physics'] = HeroProjectilePhysicsComponent()
     e.components['Graphics'] = HeroProjectileGraphicsComponent()
     e.components['Action'] = HeroProjectileActionComponent()
     return e
@@ -411,7 +490,7 @@ def create_hero_projectile(center, size=(25, 25)):
 def create_riot_police(center, size=(20, 20)):
     e = Entity(center=center, size=size)
     chardata = {'name': 'Riot Police', 'max_hp': 3, 'hp': 3, 'velocity_multiplier': 250,
-        'contact_damage': 1
+        'contact_damage': 1, 'exp': 2
                 }
     for key, val in chardata.items():
         e.__dict__[key] = val

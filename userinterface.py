@@ -1,5 +1,7 @@
 from kivy.lang import Builder
 from kivy.uix.widget import Widget
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.graphics import Line, Ellipse, Rectangle, Color
 from math import atan2, hypot, cos, sin
 from kivy.properties import NumericProperty, BooleanProperty
@@ -13,9 +15,78 @@ the main file
 
 Builder.load_string("""
 <UI>
-    HealthBar:
-        center: root.center_x, root.top - 50
+    left_ui: left_ui
+    right_stick: right_stick
+    independent: independent
+    Independent:
+        id: independent
+        HealthBar:
+            center: root.center_x, root.top - 50
+    Dependent:
+        size: root.size
+        orientation: 'horizontal'
+        spacing: 0
+        LeftUI:
+            id: left_ui
+            size_hint: .3, 1
+        RightStick:
+            id: right_stick
+            size_hint: .7, 1
 
+
+<LeftUI>
+    abilities: abilities
+    ultimate: ultimate
+    left_stick: left_stick
+    orientation: 'vertical'
+    canvas:
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            size: self.size
+            pos: self.pos
+    Widget:
+        # For options menu (?)
+        size_hint: 1, .1
+        canvas:
+            Color:
+                rgba: 1, 0, 0, 1
+            Rectangle:
+                size: self.size
+                pos: self.pos
+    Widget:
+        # For ulti button.
+        id: ultimate
+        size_hint: 1, .2
+        canvas:
+            Color:
+                rgba: 0, 1, 0, 1
+            Rectangle:
+                size: self.size
+                pos: self.pos
+    FloatLayout:
+        # For ability buttons
+        id: abilities
+        size_hint: 1, .2
+        orientation: 'horizontal'
+        canvas:
+            Color:
+                rgba: 1, 1, 0, .3
+            Rectangle:
+                size: self.size
+                pos: self.pos
+    Widget:
+        # For Leftstick, is the zone of movement control
+        size_hint: 1, .5
+        canvas:
+            Color:
+                rgba: 1, 1, 0, .7
+            Rectangle:
+                size: self.size
+                pos: self.pos
+        LeftStick:
+            id: left_stick
+            center: self.parent.center
 
 <LeftStick>
     moving_stick: moving
@@ -25,9 +96,13 @@ Builder.load_string("""
         size: 100, 100
         center: root.center
         canvas:
+            Color:
+                rgba: 0, 0, 1, .5
             Ellipse:
                 size: self.size
                 pos: self.pos
+            Color:
+                rgba: 0, 0, 0, 0
 
     Widget:
         size: moving.size
@@ -95,7 +170,8 @@ Builder.load_string("""
         center: root.center
 """
 
-class UI(Widget): # Change this into a layout for resolution scaling.
+"""
+class oldUI(Widget): # Change this into a layout for resolution scaling.
     
     def __init__(self, **kwargs):
         super(UI, self).__init__(**kwargs)
@@ -126,6 +202,72 @@ class UI(Widget): # Change this into a layout for resolution scaling.
                 element.update(game)
             except AttributeError:
                 continue
+"""
+
+class UI(Widget):
+    
+    def __init__(self, **kwargs):
+        super(UI, self).__init__(**kwargs)
+        # 'Slots' for utility abilities/buttons.
+        self.slots = [
+            AbilityButton(slot=0, size_hint=(.5, 1), pos_hint={'x': 0, 'y': 0}),
+            AbilityButton(slot=1, size_hint=(.5, 1), pos_hint={'x': .5, 'y': 0})
+        ]
+
+    # Updates all ui elements needing updates
+    def update(self, game, *args):
+        player_a = game.player.components['Action']
+        # Adds button when there is an assigned ability, doesn't account for removing buttons.
+        for slot, a in enumerate(player_a.abilities):
+            if a is None:
+                continue
+            if self.slots[slot] not in self.left_ui.abilities.children:
+                self.left_ui.add_ability(self.slots[slot])
+            # Update present abilities
+            self.slots[slot].update(game)
+
+        # Updates healthbar (for now)
+        for i in self.independent.children:
+            i.update(game)
+
+        # For checking whether or not the ability exists, to bypass looping in self.children, since before the ability exists, the button is NOT added to the UI.
+
+class Independent(Widget): # Subwidget of UI, used for elements that aren't part of the main UI boxlayout, independent of screen size.
+    pass
+
+class Dependent(BoxLayout): # Subwidget of UI, used to contain the 'leftui' and rightstick, main ui elements, dependent on screen size.
+    pass
+
+class LeftUI(BoxLayout):
+    
+    def add_ability(self, ability):
+        self.abilities.add_widget(ability)
+
+class RightStick(Widget):
+
+    def __init__(self, **kwargs):
+        super(RightStick, self).__init__(**kwargs)
+        # None so conditions in which direction to face can be done with if rightstick.angle...
+        self.angle = None
+
+    def on_touch_down(self, touch):
+        self.touch_handler(touch)
+
+    def on_touch_move(self, touch):
+        self.touch_handler(touch)
+
+    def on_touch_up(self, touch):
+        self.angle = None
+
+    def touch_handler(self, touch):
+        d = difference(self.center, touch.pos)
+        if self.collide_point(*touch.pos):
+            self.angle = atan2(d[1], d[0])
+        else:
+            self.angle = None
+
+    def update(self, game):
+        pass
 
 class LeftStick(Widget):
 
@@ -137,8 +279,6 @@ class LeftStick(Widget):
         # Used for hero movements
         self.touch_distance = 0
         self.angle = 0
-        # The stick starts on bottom left of left stick, so this is a workaround.
-        self.moving_stick.center = self.center
 
     # For on_touch_move
     # TODO: remove gradient/unecessary components
@@ -146,7 +286,7 @@ class LeftStick(Widget):
         # Can't reference moving_stick in __init__ (defined in kv lang)
         self.moving_edge = self.height / 2 - self.moving_stick.height / 2
 
-        if touch.x < Window.width / 2:
+        if self.parent.collide_point(*touch.pos):
             delta = difference(self.center, touch.pos)
             self.angle = atan2(delta[1], delta[0])
             # checks for touch collision with the control stick
@@ -167,9 +307,8 @@ class LeftStick(Widget):
     def touch_revert(self):
         self.touch_distance = 0
         self.moving_stick.center = self.center
-
-# Repeating code...
-class RightStick(Widget):
+"""
+class oldRightStick(Widget):
 
     def __init__(self, **kwargs):
         super(RightStick, self).__init__(**kwargs)
@@ -203,6 +342,7 @@ class RightStick(Widget):
         self.canvas.clear()
         self.canvas.add(Color(1, 0, 0, .5))
         self.canvas.add(self.graphics(self))
+"""
 """
 class AbilityButton(Widget):
 
@@ -277,6 +417,7 @@ class AbilityButton(Widget):
         with self.canvas:
             Color(rgb=(0,0,1))
             Rectangle(pos=self.pos, size=self.size)
+            Color(rgb=(0,0,0))
         if current_cd > 0:
             # Function for width being proportional to cd.
             cd_width = (self.ability.cooldown.current / self.ability.cooldown.default) * self.width

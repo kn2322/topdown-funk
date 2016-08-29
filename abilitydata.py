@@ -65,14 +65,15 @@ class Cooldown:
 
 	def time_step(self):
 		self.current -= 1/60
-
+"""
 # BasicAttack
-# Not sure if useful to add another layer of abstraction.
+# Not sure if useful to add another layer of abstraction. NO it is not.
 # Not in use
 class TestBA(ActiveAbility):
 
 	def activate(self, entity):
 		pass
+"""
 
 class SuperSpeed(ActiveAbility):
 
@@ -81,8 +82,8 @@ class SuperSpeed(ActiveAbility):
 	"""data in the format of 'level #cooldown duration magnitude'
 	"""
 	data = [
-			(5, 1.5, 6), # level 0
-			(5, 3, 1.45) # level 1, etc.
+			(10, 2, 1.5), # level 0
+			(10, 2, 1.7) # level 1, etc.
 			]
 	def __init__(self, level=0):
 		self.level = level
@@ -152,6 +153,7 @@ class Effect:
 	# Called when updating action component, used for counting cooldown
 	def time_step(self):
 		self.duration -= 1/60
+		#print('{}, {}'.format(type(self), self.duration))
 
 	# Mode system is replaced by two separate functions, to be more explicit.
 	def m_apply_modifier(self, attribute_id, val):

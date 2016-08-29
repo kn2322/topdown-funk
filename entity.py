@@ -44,6 +44,7 @@ class Entity(Widget):
         # velocity multiplier is changed when char move speed is change.
         # velocity is derived in physics component from multiplier.
         self.velocity_multiplier = 0
+        """velocity is now strictly for displacement"""
         self.velocity = 0, 0
 
         self.can_be_damaged = True
@@ -59,6 +60,9 @@ class Entity(Widget):
         # Entities with 1 < derives the individual ones from the attack speed.
         self.attack_speed = 0
 
+        # Leveling related segments.
+        self.exp = 0 # Amount of exp rewarded on kill, leveling up (for players) is handled in action component.
+
     def update(self, game):
         Clock.schedule_once(self.record_pos, -1)
         for name, item in self.components.items():
@@ -69,18 +73,18 @@ class Entity(Widget):
     def collide(self, other, entity_container):
         self.components['Action'].collide(self, other, entity_container)
 
-    def move(self, next_pos, map_size):
-        self.components['Physics'].move(self, next_pos, map_size)
+    #def move(self, next_pos, map_size):
+        #self.components['Physics'].move(self, next_pos, map_size)
 
     """Pass DamageInfo object (abilitydata.py) as argument,
     defines behaviour when receiving damage, whether armour or whatever
     effects are applied, before lowering the hp.
     """
     def receive_damage(self, damage_info):
-        get_value = self.components['Action'].get_value
-        if get_value(self, 'can_be_damaged'):
-            print('damaged')
-            self.components['Action'].on_receive_damage(self, damage_info)
+        self.components['Action'].on_receive_damage(self, damage_info)
+
+    def receive_exp(self, amount): # Only for player components.
+        self.components['Action'].on_receive_exp(self, amount)
 
     def record_pos(self, *args):
         self.last_pos = self.pos

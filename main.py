@@ -30,6 +30,10 @@ Builder.load_string("""
         id: container
         size: 1, 1
 
+    Label:
+        center: 800, 500
+        text: 'Entity num: {}'.format(len(container.children))
+
     UI:
         size: root.size
         id: user_interface
@@ -40,6 +44,7 @@ Window.size = (1136, 640)
 
 # Container widget for all game entites, so they can be referenced by the game.
 # Also the collision detector
+
 class EntityContainer(Widget):
 
     # Lists containing all the entities in any category.
@@ -60,9 +65,9 @@ class EntityContainer(Widget):
     # Additionally gold, exp, and such can be awarded here
     def update(self, game, *args):
 
-        self.check_collision(game.map_size)
+        #self.check_collision(game.game_map)
         
-        for entity in self.children:
+        for entity in self.children: # Consider changing to update all components of one type.
             entity.update(game)
 
     # Interface for adding entities, includes sanity checks
@@ -73,11 +78,13 @@ class EntityContainer(Widget):
         self.add_widget(entity)
 
     # Does the collision
-    def check_collision(self, map_size):
+    def check_collision(self, map):
         for idx, entity in enumerate(self.children):
             for other in self.children[idx+1:]:
                 #print('{} checks against {}'.format(entity, other))
                 if circle_collide(entity, other):
+
+                    """
                     # Collision direction, 1 is from right/top
                     col_dir_x = entity.x - other.x
                     try:
@@ -95,7 +102,7 @@ class EntityContainer(Widget):
                     vx = Vector(1, 0)
                     # Vector y
                     vy = Vector(0, 1)
-                    """
+                    
                     while abs(entity.x - other.x) < entity.width + other.width:
                         entity.move(Vector(entity.pos) + vx, map_size)
                         other.move(Vector(other.pos) - vx, map_size)
@@ -119,7 +126,9 @@ class Game(Widget):
         self.player = char.create_hero((100, 100))
 
         self.e_container.add_entity(self.player)
-        self.camera = camera.Camera(Window.size, camera.center_cam)
+        self.camera = camera.Camera(camerafunc=camera.center_cam, 
+                                    anchor=self.user_interface.right_stick.pos,
+                                    center=self.player.center) # This line does not seem to do anything.
 
         # For testing before spawn algorithm is done.
         for e in [char.create_riot_police((800, 600)), char.create_riot_police((100, 600))]:

@@ -32,7 +32,8 @@ def get_direction(angle):
 
 # For circular collision detection
 def circle_collide(a, b):
-    return hypot(*difference(a.center, b.center)) <= a.width + b.width
+    # Confused about whether the condition should be with < or <=, probably negligible.
+    return hypot(*difference(a.center, b.center)) < a.width + b.width
 
 # Gets x, y direction towards target.
 def get_dir_to(entity, other):
