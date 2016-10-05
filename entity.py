@@ -2,6 +2,7 @@ from kivy.uix.widget import Widget
 from kivy.properties import NumericProperty, BoundedNumericProperty, ListProperty, StringProperty, BooleanProperty
 from collections import OrderedDict
 from kivy.clock import Clock
+from kivy.vector import Vector
 
 """Module containing the entity class, which will be imported,
 along with components.
@@ -45,7 +46,8 @@ class Entity(Widget):
         # velocity is derived in physics component from multiplier.
         self.velocity_multiplier = 0
         """velocity is now strictly for displacement"""
-        self.velocity = 0, 0
+        self.velocity = Vector(0, 0)
+        self.friction = 6 # Resistance to knockback, higher is more friction.
 
         self.can_be_damaged = True
         self.max_hp = 0
@@ -64,14 +66,16 @@ class Entity(Widget):
         self.exp = 0 # Amount of exp rewarded on kill, leveling up (for players) is handled in action component.
 
     def update(self, game):
-        Clock.schedule_once(self.record_pos, -1)
+        #Clock.schedule_once(self.record_pos, -1)
         for name, item in self.components.items():
             if item is None:
                 continue
             item.update(self, game)
 
+    """Deprecated, pointless method.
     def collide(self, other, entity_container):
         self.components['Action'].collide(self, other, entity_container)
+    """
 
     #def move(self, next_pos, map_size):
         #self.components['Physics'].move(self, next_pos, map_size)
@@ -86,6 +90,5 @@ class Entity(Widget):
     def receive_exp(self, amount): # Only for player components.
         self.components['Action'].on_receive_exp(self, amount)
 
-    def record_pos(self, *args):
+    def record_pos(self, *args): # Unused, possibly useless
         self.last_pos = self.pos
-        return None

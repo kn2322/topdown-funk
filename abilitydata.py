@@ -64,7 +64,8 @@ class Cooldown:
 		self.current = self.default
 
 	def time_step(self):
-		self.current -= 1/60
+		if self.current > 0:
+			self.current -= 1/60
 """
 # BasicAttack
 # Not sure if useful to add another layer of abstraction. NO it is not.
@@ -138,7 +139,7 @@ class Effect:
 	a_modifier_list = {}
 	spec_modifier_list = {}
 
-	def __init__(self, origin_id, duration):
+	def __init__(self, duration, origin_id=None):
 		self.origin_id = origin_id # origin is the source of the effect, used for stacking effects properly
 		self.duration = duration # In frames
 

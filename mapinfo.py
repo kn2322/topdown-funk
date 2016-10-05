@@ -3,7 +3,6 @@ from kivy.uix.image import Image
 from kivy.graphics import Rectangle, Ellipse, Color
 from kivy.vector import Vector
 from kivy.uix.gridlayout import GridLayout
-from collections import namedtuple
 
 """Module used to contain all information about the game map(s),
 including obstacles to be placed, and other fine details that
@@ -18,7 +17,7 @@ class Map(Widget):
 
     MAPS = {
         'galaxy': (
-        (3200, 1080), Rectangle(size=(3200, 1080), source='./assets/maps/galaxy.jpg')
+        (1600, 1200), Rectangle(size=(1600, 1200), source='./assets/maps/galaxy.jpg')
         )
     }
 

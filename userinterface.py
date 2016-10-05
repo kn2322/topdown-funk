@@ -22,6 +22,7 @@ Builder.load_string("""
         id: independent
         HealthBar:
             center: root.center_x, root.top - 50
+            
     Dependent:
         size: root.size
         orientation: 'horizontal'
@@ -230,6 +231,8 @@ class UI(Widget):
         for i in self.independent.children:
             i.update(game)
 
+        self.right_stick.update(game)
+
         # For checking whether or not the ability exists, to bypass looping in self.children, since before the ability exists, the button is NOT added to the UI.
 
 class Independent(Widget): # Subwidget of UI, used for elements that aren't part of the main UI boxlayout, independent of screen size.
@@ -260,8 +263,8 @@ class RightStick(Widget):
         self.angle = None
 
     def touch_handler(self, touch):
-        d = difference(self.center, touch.pos)
         if self.collide_point(*touch.pos):
+            d = difference(self.center, touch.pos)
             self.angle = atan2(d[1], d[0])
         else:
             self.angle = None
@@ -277,7 +280,7 @@ class LeftStick(Widget):
         super(LeftStick, self).__init__(**kwargs)
         # touch_distance will be the touch's distance from center in decimal
         # Used for hero movements
-        self.touch_distance = 0
+        self.touch_distance = None
         self.angle = 0
 
     # For on_touch_move
@@ -305,7 +308,7 @@ class LeftStick(Widget):
 
      # For on_touch_up
     def touch_revert(self):
-        self.touch_distance = 0
+        self.touch_distance = None
         self.moving_stick.center = self.center
 """
 class oldRightStick(Widget):

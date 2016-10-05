@@ -1,11 +1,12 @@
 from kivy.vector import Vector
-from kivy.graphics import Ellipse
+from kivy.graphics import Ellipse, Color
 from kivy.clock import Clock
 from math import sin, cos, atan2, hypot
 from utilfuncs import circle_collide, difference
-from abilitydata import DamageInfo, Cooldown, Invincibility, SuperSpeed
+from abilitydata import DamageInfo, Cooldown, Invincibility, SuperSpeed, SpeedUp
 from entity import Entity
 from functools import partial
+import random
 
 """Module used to contain all of the character components in the game
 """
@@ -15,11 +16,11 @@ class InputComponent:
 
 class PhysicsComponent:
 
-    def __init__(self):
+    def __init__(self): # Pls call super()... every time it's subclassed
         # direction is a value received from the input component indicating direction of movement.
         self.direction = [0, 0]
         self.total_velocity = [0, 0] # imperative movement + displacement.
-        self.time = False
+        self.can_collide_wall = True
         """
         # The controlled movement velocity.
         self.c_velocity = [0, 0]
@@ -51,16 +52,20 @@ class PhysicsComponent:
 
         entity.pos = outx, outy
 
+    """ Moved to entity container.
     # For the physics interactions with colliding entity.
     def collide_entity(self, entity, other, entity_container): # Returns next position.
         return self.separate(entity, other)
+    """
 
     """Returns next_pos where objects don't intersect, recommend to call this first
     in collision resolving.
     """
+    """ Moved to entity container
     def separate(self, entity, other):
         v = self.total_velocity # Total, adding displacement and imperative movement.
-        """ Theory, find the amount to add to the currrent entity position so that
+        
+        Theory, find the amount to add to the currrent entity position so that
         it is exactly colliding with the other using circle_collide,
         which is hypot(*difference(a.center, b.center)) == a.width + b.width.
         In an eqn where x is the coefficient (time) for the total velocity so that it
@@ -68,31 +73,37 @@ class PhysicsComponent:
 
         New, calculate overlapping distance by subtracting distance of two entities from the sum of
         the radii. Then move back by the current direction * depth.
-        """
+        
         diff = difference(entity.pos, other.pos)
         depth = (entity.width + other.width) / 2 - hypot(*diff) # Overlapping distance
         min_pv = Vector(*diff).normalize() * depth # Min penetrating vector using current velocity vector (not actually minimum)
         next_pos = Vector(*entity.pos) + (v - min_pv)
         return next_pos
+    """
 
-    # Wall colliding behaviour.
-    def collide_wall(self, entity, map_size):
-        pass
-
-    def move_to_mapborder(self, entity, map_size): # Handles the edge of the map.
+    # Wall colliding behaviour, default from entity container is to do nothing.
+    def collide_wall(self, entity, entity_container):
         pass
 
     def move(self, entity, game):
         get_value = entity.components['Action'].get_value
         multiplier = get_value(entity, 'velocity_multiplier')
         # Multiply 'direction' with speed and divide by 60 for updates per second.
-        controlled_movement = Vector(self.direction) * (multiplier / 60)
-        self.total_velocity = Vector(*controlled_movement) + Vector(*entity.velocity)
+        if self.direction:
+            controlled_movement = Vector(self.direction) * (multiplier / 60)
+        else:
+            controlled_movement = Vector(0, 0)
+        displacement = entity.velocity
+        self.total_velocity = Vector(*controlled_movement) + displacement
         next_pos = Vector(*entity.pos) + self.total_velocity
+
+        # Reducing displacment vector based on friction.
+        displacement *= 1 - (entity.friction / 60) if displacement.length() > 0.5 else 0 # Prevent infinitely close to 0.
 
         # Checks for collision with all types, keeps recalculating physics until there are no more collisions,
         # makes entity move up to the border of an entity it collides with, while the collision funcs define behaviour afterwards.
 
+        """ Moved to collision engine (entity container)
         # This block is currently bugged beyond belief.
 
         e_container = game.e_container
@@ -106,8 +117,13 @@ class PhysicsComponent:
                 # Collide for both entities MUST be called, otherwise your own collision will only be called when you move.
                 entity.components['Action'].collide(entity, e, e_container)
                 e.components['Action'].collide(e, entity, e_container)
+        """
         
         entity.pos = next_pos
+
+    # if cant_collide: return False else: return True is the way this should be used, called with an all().
+    def can_collide(self, entity, other):
+        return True # Can be physically resolved, called in entity container.
         
 # Convert center pos to actual pos for canvas instructions.
 def center_to_pos(size, pos):
@@ -133,7 +149,8 @@ class GraphicsComponent:
         for i in self.graphics:
             # The position of the instruction of a coordinate space of (0, 0)-(width, height) which is then offsetted by camera.
             # Works because draw_pos accounted for the original position of the entity.
-            i.pos = Vector(center_to_pos(i.size, i.pos)) + Vector(*draw_pos)
+            if type(i) != Color:
+                i.pos = Vector(center_to_pos(i.size, i.pos)) + Vector(*draw_pos)
             entity.canvas.add(i)
 
     # the graphics can be altered without copying the entire update function.
@@ -224,16 +241,23 @@ class HeroInputComponent(InputComponent):
         # Same one as the one in left stick, used for reference by physics.
         # This is not encapsulated and decoupled, use caution.
         # Decimal distance of moving stick from border
-        self.touch_distance = 0
+
+        self.leftdown = False # Booleans for entity state.
+        self.rightdown = False
 
     def update(self, entity, game):
-        self.basic_attack_speed = entity.attack_speed
         ui = game.user_interface
-        self.activate_left(entity, ui.left_ui.left_stick)
+        left_stick = ui.left_ui.left_stick
+        if left_stick.touch_distance != None and left_stick.touch_distance >= 0.7:
+            self.leftdown = True
+            self.activate_left(entity, left_stick)
+        else:
+            entity.components['Physics'].direction = None
+            self.leftdown = False
+        self.rightdown = bool(ui.right_stick.angle)
 
     def activate_left(self, entity, left_stick):
         angle = left_stick.angle
-        self.touch_distance = left_stick.touch_distance
         x = cos(angle)
         y = sin(angle)
         # Tells physics the direction, not the full velocity, which is processed more.
@@ -243,8 +267,10 @@ class HeroInputComponent(InputComponent):
 class HeroPhysicsComponent(PhysicsComponent):
 
     def update(self, entity, game):
-        if entity.components['Input'].touch_distance <= .7:
-            return None
+        """acomp = entity.components['Action']
+
+        if acomp.state in ('moving', 'attacking') and self.direction: # If left_stick is activated.
+        """
         self.move(entity, game)
 
     # TODO: Add displacement/knockback
@@ -257,14 +283,19 @@ class HeroGraphicsComponent(GraphicsComponent):
 
 # The base class for player characters action components.
 class HeroActionComponent(ActionComponent):
+
+    states = ['idle', 'moving', 'attacking']
     
     def __init__(self):
         super(HeroActionComponent, self).__init__()
         self.abilities = [None, None]
         # Using cooldown object to reduce number of variables
-        self.basic_attack_cd = Cooldown(0)
+        self.basic_attack_cd = Cooldown(0) # The duration is attack animation duration.
         self.exp = 0
-        self.levels = (0, 0, 0) # Level increments.
+        self.level = 0 # used for checking for level ups.
+        self.lvl_boundaries = (0, 500, 7, 20) # Level increments.
+        self.state = 'idle'
+
 
     def assign_util_ability(self, ability):
         for idx, slot in enumerate(self.abilities):
@@ -280,20 +311,67 @@ class HeroActionComponent(ActionComponent):
                 ability.time_step()
             except AttributeError:
                 continue
-        self.activate_right(entity, game)
+
+        self.basic_attack_cd.time_step()
+
+        icomp = entity.components['Input']
+
+        if self.state == 'idle':
+            if icomp.rightdown:
+                self.state = 'attacking'
+            elif icomp.leftdown:
+                self.state = 'moving'
+
+        elif self.state == 'attacking':
+            if self.basic_attack_cd.current > 0: # If attack animation is not finished.
+                effect = SpeedUp(None, 1/60, 0.3)
+                self.effects.append(effect)
+            elif icomp.rightdown:
+                self.activate_right(entity, game)
+            elif icomp.leftdown:
+                self.state = 'moving'
+            else:
+                self.state = 'idle'
+
+        elif self.state == 'moving':
+            if icomp.rightdown:
+                self.state = 'attacking'
+            elif icomp.leftdown:
+                pass
+            else:
+                self.state = 'idle'
+            
+
+        if self.exp >= self.lvl_boundaries[self.level+1]:
+            self.level += 1
+            game.level_up()
+
 
     # Needs to know game for both ui and e_container
     # Used for handling cooldowns and conditions for basic attack.
     def activate_right(self, entity, game):
-        angle = game.user_interface.right_stick.angle
+        angle = game.user_interface.right_stick.angle # Angle of touch.
         # Angle is None if touch is not pressed.
         if angle and self.basic_attack_cd.current <= 0:
-            a = create_hero_projectile(entity.center)
-            a.components['Physics'].direction = [cos(angle), sin(angle)]
-            game.e_container.add_entity(a)
+
+            def create_proj(*args):
+                a = create_hero_projectile(Vector(*entity.center), velocity_multiplier=100) # target_pos is for curving towards a location.
+                direction = Vector(cos(angle), sin(angle)).rotate(random.uniform(-5, 5))
+                #a.velocity_multiplier = random.uniform(400, 700) # TODO: Replace with some kwarg instead of direct access.
+                a.components['Physics'].direction = direction
+                #a.center = Vector(*a.center) + Vector(cos(angle), sin(angle)) * 3 # For spawning the missile off center.
+                game.e_container.add_entity(a)
+
+            for idx, _ in enumerate(range(3)): # Chain missile test.
+                #Clock.schedule_once(create_proj, idx/10)
+                create_proj()
+
             self.basic_attack_cd.activate()
+
+            entity.velocity += -Vector(cos(angle), sin(angle)).rotate(random.randint(-10, 10)) * 2 # Recoil to give weight, multiplier is magnitude.
         else:
-            self.basic_attack_cd.time_step()
+            pass
+            #self.basic_attack_cd.time_step()
 
     def collide(self, entity, other, entity_container):
         pass
@@ -310,11 +388,15 @@ class HeroActionComponent(ActionComponent):
         #print('damaged, %s' % self.get_value(entity, 'can_be_damaged'))
         if self.get_value(entity, 'can_be_damaged'):
             entity.hp -= damage_info.amount
-            self.effects.append(Invincibility(self, 1.5))
+            self.effects.append(Invincibility(self, 0.5))
 
     def on_receive_exp(self, entity, amount): # Unique to player action component.
         print('Player has received {} exp'.format(amount))
         self.exp += amount
+
+    def destroy(self, entity, game):
+        game.game_over()
+
 
 """Below this point are enemy components.
 """
@@ -336,21 +418,15 @@ class BaseAIComponent(InputComponent):
             }
 
         self.state = 'IDLE'
-        # Seconds times update speed.
+        # Seconds * update speed.
         self.cooldown = 2 * 60
-        # The amount of time in between each state function call, to give sense of lag.
-        self.cycle_count = 20
 
     def update(self, entity, game):
         if self.cooldown <= 0:
             self.state = self.get_state(entity, game)
         self.cooldown -= 1
 
-        if self.cycle_count <= 0:
-            self.states[self.state](entity, game)
-            self.cycle_count = 20
-        else:
-            self.cycle_count -= 1
+        self.states[self.state](entity, game)
 
     """The ai states work in a hierarchy of 2 levels (as of now).
     First is get_state, which makes a broad decision based on the game situation
@@ -386,12 +462,16 @@ class RiotPoliceInputComponent(BaseAIComponent):
     pass
 
 class RiotPolicePhysicsComponent(PhysicsComponent):
-    pass
+    
+    def update(self, entity, game):
+        super(RiotPolicePhysicsComponent, self).update(entity, game)
+        # TODO: Add stuff here.
 
 class RiotPoliceGraphicsComponent(GraphicsComponent):
 
     def update_graphics(self, entity):
         g = []
+        g.append(Color())
         g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
         g.append(Ellipse(size=(10,10), pos=(0, entity.height/2)))
         g.append(Ellipse(size=(10,10), pos=(entity.width/2, entity.height)))
@@ -414,7 +494,18 @@ class RiotPoliceActionComponent(ActionComponent):
                 self.get_value(entity, 'contact_damage'), # damage is gotten through get_value interface.
                 'contact' # dmg_type
                 )
+            #print(other.name)
             other.receive_damage(dmg_inf)
+            # Knockback code on contact.
+            # TODO: Add variable for knockback magnitude.
+            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 8
+        elif other.name in entity_container.enemies:
+            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 2
+
+    def destroy(self, entity, game):
+        game.player.receive_exp(entity.exp)
+        game.decal_engine.add_decal(entity.center)
+        game.e_container.remove_widget(entity)
 
 """Below here are all of the 'sub entities' created by entities (projectiles, etc.)
 Each one will have a comment as to what entity(s) it belongs to.
@@ -422,15 +513,58 @@ Each one will have a comment as to what entity(s) it belongs to.
 
 class HeroProjectilePhysicsComponent(PhysicsComponent):
 
-    def collide_entity(self, entity, other, entity_container): # Overridden bc projectile is destroyed on contact with enemy.
-        return Vector(*entity.pos) + self.total_velocity
+    #def collide_entity(self, entity, other, entity_container): # Overridden bc projectile is destroyed on contact with enemy.
+        #return Vector(*entity.pos) + self.total_velocity
+
+    def __init__(self, target_pos=None, **kw):
+        super(HeroProjectilePhysicsComponent, self).__init__(**kw)
+        self.target_pos = target_pos # Aimed position, NOT IN USE.
+
+    def update(self, entity, game):
+        super(HeroProjectilePhysicsComponent, self).update(entity, game)
+        self.direction = Vector(*self.direction).rotate(random.choice([2, -2, 0])) # 'shakes' the missile. Testing.
+
+    def can_collide(self, entity, other):
+        return False # Shouldn't resolve with anything.
+
+    def collide_wall(self, entity, entity_container):
+        entity.components['Action'].collide_wall(entity, entity_container) # Calls into exploding upon hitting wall.
 
 class HeroProjectileGraphicsComponent(GraphicsComponent):
 
-    pass
+    def __init__(self, **kwargs):
+        super(HeroProjectileGraphicsComponent, self).__init__(**kwargs)
+        self.explosion_config = None # To save the randomly generated explosion color.
+
+    def update_graphics(self, entity):
+        r = random.random
+        state = entity.components['Action'].state
+        g = []
+        if state == 'initial':
+            g.append(Color())
+            g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
+        else:
+            colors = self.generate_explosion()
+            g.append(colors[0])
+            g.append(Ellipse(size=(entity.width * 1.5, entity.height * 1.5), pos=(entity.width/2, entity.height/2)))
+            #g.append(colors[1])
+            #g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
+            
+        return g
+
+    def generate_explosion(self):
+        r = random.random
+        if self.explosion_config == None:
+            self.explosion_config = []
+            self.explosion_config.append(Color(rgba=(1,r(),r(),1)))
+            self.explosion_config.append(Color(rgba=(r(),r(),r(),0.2)))
+            return self.explosion_config
+        else:
+            return self.explosion_config
+
 
 # Belongs to the 'Hero' or 'test_hero' entity, as a projectile to fire.
-class HeroProjectileActionComponent(ActionComponent):
+class HeroProjectileActionComponentPROTOTYPE(ActionComponent):
 
     def __init__(self, dmg=1):
         super(HeroProjectileActionComponent, self).__init__()
@@ -444,9 +578,91 @@ class HeroProjectileActionComponent(ActionComponent):
         if other.name in entity_container.enemies:
             d = DamageInfo(entity, self.damage, 'projectile')
             other.receive_damage(d)
-            entity_container.remove_widget(entity)
+            # The access to total velocity is unelegant.
+            # Knockback code, knocks enemy back in average(pos_difference, projectile direction) direction.
+            difference = (Vector(*other.pos) - Vector(*entity.pos)).normalize()
+            entity_velocity = Vector(*entity.components['Physics'].total_velocity).normalize()
+            knockback = (difference + entity_velocity) / 2
+            other.velocity += knockback * 20 # The magnitude of the knockback.
+            entity_container.remove_widget(entity) # Remove projectile after hitting something.
 
-    # Can't be destroyed, destructible projectiles can have hp value.
+    # Can't be destroyed, destructible projectiles have 1 hp.
+    def on_receive_damage(self, *args):
+        pass
+
+class HeroProjectileActionComponent(ActionComponent):
+
+    def __init__(self, dmg=1):
+        super(HeroProjectileActionComponent, self).__init__()
+        self.damage = dmg
+        self.states = ['initial', 'exploding', 'exploded']
+        self.state = 'initial'
+        self.explode_time = 0
+
+    # No need for active effects on a projectile.
+    def update(self, entity, game):
+        if self.state == 'initial':
+            entity.velocity_multiplier += (10 * 30) / 60 # Acceleration, 1st term is 'meter', where 10 pixels is a meter. 2nd is how many m/s acceleration.
+        if self.explode_time > 0:
+            self.state = 'exploded'
+            Clock.schedule_once(lambda dt: game.e_container.remove_widget(entity), 0.2)
+
+        if self.state == 'exploding':
+            self.explode_time += 1
+
+    def collide(self, entity, other, entity_container):
+        if self.state == 'initial': 
+
+            def death_memes(dt):
+                self.explode(entity)
+                self.state = 'exploding'
+
+            if other.name in entity_container.enemies:
+                death_memes(None)
+
+            elif other.name == entity.name and other.components['Action'].state == 'exploding':
+            # Temporary check for missiles exploding eachother, needs to be changed for different missile types.
+                Clock.schedule_once(death_memes, 0.1)
+
+            else:
+                return None
+
+        elif self.state == 'exploding': 
+
+            if other.name in entity_container.enemies or other.name in entity_container.players:
+
+                difference = Vector(*other.center) - Vector(*entity.center)
+                #entity_velocity = Vector(*entity.components['Physics'].total_velocity).normalize()
+                #knockback = (difference + entity_velocity) / 2
+                # Above comments are pre explosion knockback code.
+                percent = (difference.length() - other.width) / entity.width # Distance from center of explosion
+                magnitude =  -15 * percent + 12 # The magnitude of the knockback.
+                other.velocity += difference.normalize() * magnitude
+
+
+            if other.name in entity_container.enemies:
+                d = DamageInfo(entity, self.damage, 'projectile')
+                other.receive_damage(d)
+
+
+        elif self.state == 'exploded':
+            entity.velocity_multiplier = 150 # Causes a 'blast' visual effect on the target.
+            
+
+    def explode(self, entity):
+        c = [entity.center_x, entity.center_y][:]
+        entity.size = (35, 35)
+        entity.center = c
+        entity.velocity_multiplier = 0
+        entity.components['Physics'].can_collide_wall = False # So dirty access, better change, stops explosions from being resolved.
+
+    def collide_wall(self, entity, entity_container): # Called from physics component.
+        def death_memes(dt):
+            self.explode(entity)
+            self.state = 'exploding'
+        Clock.schedule_once(death_memes, -1) # To stop explosion overlap from chain explosions, which can cause double explosions.
+
+    # Can't be destroyed, destructible projectiles have 1 hp.
     def on_receive_damage(self, *args):
         pass
 
@@ -457,11 +673,11 @@ components, entity, various attributes.
 """
 
 # Window.center is to be changed to starting position on the game map
-def create_hero(center, size=(20, 20)):
+def create_hero(center, size=(16, 16)):
     # TODO: Add error checking if the name is not in any valid names.
     e = Entity(center=center, size=size)
     chardata = {'name': 'test_hero', 'max_hp': 20, 'hp': 20, 
-        'velocity_multiplier': 450, 'attack_speed': 1.5
+        'velocity_multiplier': 300, 'attack_speed': 0.15
         }
     for key, val in chardata.items():
         e.__dict__[key] = val
@@ -473,24 +689,24 @@ def create_hero(center, size=(20, 20)):
     # The add_widget step is not in the function, so it's decoupled.
     return e
 
-def create_hero_projectile(center, size=(25, 25)):
+def create_hero_projectile(center, size=(6, 6), velocity_multiplier=100, target_pos=None): # target_pos is for missile curving.
     e = Entity(size=size)
     e.center = center
     chardata = {'name': 'test_projectile', 'max_hp': 1, 'hp': 1,
-        'velocity_multiplier': 700, 'can_be_damaged': False
+        'velocity_multiplier': velocity_multiplier, 'can_be_damaged': False
         }
     for key, val in chardata.items():
         e.__dict__[key] = val
     e.components['Input'] = None
-    e.components['Physics'] = HeroProjectilePhysicsComponent()
+    e.components['Physics'] = HeroProjectilePhysicsComponent(target_pos)
     e.components['Graphics'] = HeroProjectileGraphicsComponent()
     e.components['Action'] = HeroProjectileActionComponent()
     return e
 
-def create_riot_police(center, size=(20, 20)):
+def create_riot_police(center, size=(16, 16)):
     e = Entity(center=center, size=size)
-    chardata = {'name': 'Riot Police', 'max_hp': 3, 'hp': 3, 'velocity_multiplier': 250,
-        'contact_damage': 1, 'exp': 2
+    chardata = {'name': 'Riot Police', 'max_hp': 3, 'hp': 3, 'velocity_multiplier': 125,
+        'contact_damage': 1, 'exp': 1
                 }
     for key, val in chardata.items():
         e.__dict__[key] = val
