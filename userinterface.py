@@ -2,12 +2,17 @@ from kivy.lang import Builder
 from kivy.uix.widget import Widget
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.button import Button
 from kivy.graphics import Line, Ellipse, Rectangle, Color
 from math import atan2, hypot, cos, sin
-from kivy.properties import NumericProperty, BooleanProperty
+from kivy.properties import NumericProperty, BooleanProperty, StringProperty, ObjectProperty
 from kivy.vector import Vector
 from kivy.core.window import Window
+from functools import reduce
 from utilfuncs import difference
+from kivy.clock import Clock
+# For the Rick Roll
+import webbrowser
 
 """Module used to contain all of the ui elements in the game, to avoid cluttering
 the main file
@@ -18,6 +23,7 @@ Builder.load_string("""
     left_ui: left_ui
     right_stick: right_stick
     independent: independent
+
     Independent:
         id: independent
         HealthBar:
@@ -39,6 +45,8 @@ Builder.load_string("""
     abilities: abilities
     ultimate: ultimate
     left_stick: left_stick
+    pause_button: pause_button
+
     orientation: 'vertical'
     canvas:
         Color:
@@ -48,23 +56,33 @@ Builder.load_string("""
             pos: self.pos
     Widget:
         # For options menu (?)
+        id: pause_button
         size_hint: 1, .1
         canvas:
             Color:
-                rgba: 1, 0, 0, 1
+                rgba: 0.7, 0, 0, 1
             Rectangle:
                 size: self.size
                 pos: self.pos
+        Label:
+            pos: self.parent.pos
+            size: self.parent.size
+            text: 'Pause'
+
     Widget:
         # For ulti button.
         id: ultimate
         size_hint: 1, .2
         canvas:
             Color:
-                rgba: 0, 1, 0, 1
+                rgba: 0, 0.7, 0, 1
             Rectangle:
                 size: self.size
                 pos: self.pos
+        Label:
+            center: self.parent.center
+            text: 'Super Secret Settings'
+
     FloatLayout:
         # For ability buttons
         id: abilities
@@ -81,13 +99,20 @@ Builder.load_string("""
         size_hint: 1, .5
         canvas:
             Color:
-                rgba: 1, 1, 0, .7
+                rgba: 1, 0.75, 0.25, 1
             Rectangle:
                 size: self.size
                 pos: self.pos
         LeftStick:
             id: left_stick
             center: self.parent.center
+
+<AbilityButton>
+
+    Label:
+        pos: root.pos
+        size: root.size
+        text: str(root.ability)
 
 <LeftStick>
     moving_stick: moving
@@ -98,19 +123,17 @@ Builder.load_string("""
         center: root.center
         canvas:
             Color:
-                rgba: 0, 0, 1, .5
+                rgba: 0.75, 0.25, 0.25, 1
             Ellipse:
                 size: self.size
                 pos: self.pos
-            Color:
-                rgba: 0, 0, 0, 0
 
     Widget:
         size: moving.size
         center: root.center
         canvas:
             Color:
-                rgba: 0, 0, 1, .5
+                rgba: 0, 0.25, 0.5, 1
             Ellipse:
                 size: self.size
                 pos: self.pos
@@ -122,13 +145,18 @@ Builder.load_string("""
         on_touch_move: root.touch_handler(args[1])
         on_touch_up: root.touch_revert()
         center: root.center
-        size: 40, 40
+        size: 70, 70
         canvas:
             Color:
-                rgba: 0, 0, 1, 1
+                rgba: 0, 0.5, 1, 1
             Ellipse:
                 size: self.size
                 pos: self.pos
+            Color:
+                rgb: 0.1, 0.2, 0.3
+            Line:
+                width: 2
+                circle: (*self.center, self.width / 2)
 
 <HealthBar>
     size: 200, 50
@@ -169,6 +197,22 @@ Builder.load_string("""
         id: cd_indicator
         size: 1, 1
         center: root.center
+
+<AbilityButton>
+    canvas:
+        Color:
+            rgb: 0, 0, 1
+        Rectangle:
+            size: root.size
+            pos: root.pos
+
+    canvas.after:
+
+        Color:
+            a: 0.3
+        Rectangle:
+            pos: root.pos
+            size: self.cd_indicator_width, root.height
 """
 
 """
@@ -214,9 +258,11 @@ class UI(Widget):
             AbilityButton(slot=0, size_hint=(.5, 1), pos_hint={'x': 0, 'y': 0}),
             AbilityButton(slot=1, size_hint=(.5, 1), pos_hint={'x': .5, 'y': 0})
         ]
+        self.game = None # Workaround reference to main game.
 
     # Updates all ui elements needing updates
     def update(self, game, *args):
+        self.game = game
         player_a = game.player.components['Action']
         # Adds button when there is an assigned ability, doesn't account for removing buttons.
         for slot, a in enumerate(player_a.abilities):
@@ -233,6 +279,9 @@ class UI(Widget):
 
         self.right_stick.update(game)
 
+    def pause(self):
+        self.game.pause()
+
         # For checking whether or not the ability exists, to bypass looping in self.children, since before the ability exists, the button is NOT added to the UI.
 
 class Independent(Widget): # Subwidget of UI, used for elements that aren't part of the main UI boxlayout, independent of screen size.
@@ -242,9 +291,31 @@ class Dependent(BoxLayout): # Subwidget of UI, used to contain the 'leftui' and 
     pass
 
 class LeftUI(BoxLayout):
-    
+
+    def __init__(self, **kwargs):
+        super(LeftUI, self).__init__(**kwargs)
+        self.ricked = False
+
     def add_ability(self, ability):
         self.abilities.add_widget(ability)
+
+    def on_touch_down(self, touch):
+
+        if self.pause_button.collide_point(*touch.pos):
+            self.parent.parent.pause() # Refers to UI.
+
+        elif self.ultimate.collide_point(*touch.pos):
+            self.parent.parent.pause()
+
+            if not self.ricked:
+                # Rick Roll
+                webbrowser.open('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+                self.ricked = True
+                
+                def unrick(dt):
+                    self.ricked = False
+                # Allows repeated Rick Rolls, clock to workaround multiple registered touches every touch.
+                Clock.schedule_once(unrick, 1)
 
 class RightStick(Widget):
 
@@ -272,6 +343,68 @@ class RightStick(Widget):
     def update(self, game):
         pass
 
+class LeftStick(Widget):
+
+    moving_edge = NumericProperty()
+
+    def __init__(self, **kwargs):
+        super(LeftStick, self).__init__(**kwargs)
+        # Used for hero movements
+        self.touch_distance = None # To satisfy the hero components.
+        self.angle = 0
+
+        self.keyboard = Window.request_keyboard( # The args are fairly irrelevant bc this is a mode for pc testing.
+            self.on_key_closed, self, 'text') # callback when keyboard is closed, target widget, keyboard type.
+        self.keyboard.bind(on_key_down=self.on_key_down)
+        self.keyboard.bind(on_key_up=self.on_key_up)
+        self.kb_status = {i: False for i in ['w', 'a', 's', 'd']}
+        self.key_directions = {'w': Vector(0, 1), 'a': Vector(-1, 0), 's': Vector(0, -1), 'd': Vector(1, 0)}
+
+    def on_key_down(self, keyboard, keycode, text, modifiers): # Mandatory arguments, keycode in form (int, letter)
+        #print('{} has been pressed.'.format(keycode))
+
+        if keycode[1] in self.kb_status.keys():
+            self.kb_status[keycode[1]] = True
+            self.update()
+
+    def on_key_up(self, keyboard, keycode):
+        if keycode[1] in self.kb_status.keys():
+            self.kb_status[keycode[1]] = False
+            self.update()
+
+    def on_key_closed(self):
+        print('Keyboard has been closed.')
+
+    def touch_handler(self, touch): # So kv lang doesn't need to be changed to use kb.
+        pass
+
+    def touch_revert(self):
+        pass
+
+    # Called whenever the keyboard changes, evaluates new state and changes.
+    def update(self):
+        # Can't reference moving_stick in __init__ (defined in kv lang)
+        self.moving_edge = self.height / 2 - self.moving_stick.height / 2
+        if any(self.kb_status.values()): # If any keys are down, move stick to reflect movement direction.
+            self.touch_distance = 1
+
+            kb_status = [i for i, status in self.kb_status.items() if status]
+            # reduce to allow adding with vectors, since sum() does not.
+            direction = reduce(lambda a, b: a + b, [self.key_directions[i] for i in kb_status])
+            if direction.length() == 0: # conflicting directions, so the character stops.
+                self.touch_distance = None
+                self.moving_stick.center = self.center
+                return None
+            self.angle = atan2(direction[1], direction[0])
+
+            x = self.center_x + self.moving_edge * cos(self.angle)
+            y = self.center_y + self.moving_edge * sin(self.angle)
+            self.moving_stick.center = (x, y)
+        else:
+            self.touch_distance = None
+            self.moving_stick.center = self.center
+
+"""Leftstick touchscreen version.
 class LeftStick(Widget):
 
     moving_edge = NumericProperty()
@@ -310,6 +443,7 @@ class LeftStick(Widget):
     def touch_revert(self):
         self.touch_distance = None
         self.moving_stick.center = self.center
+"""
 """
 class oldRightStick(Widget):
 
@@ -387,12 +521,14 @@ class AbilityButton(Widget):
 class AbilityButton(Widget):
 
     cooldown = NumericProperty(1)
+    ability = ObjectProperty()
 
     # Purpose: So that the button's behavior is able to be swapped out depending on hero.
     def __init__(self, slot, **kwargs):
         super(AbilityButton, self).__init__(**kwargs)
         self.slot = slot
         self.ability = None
+
 
     def on_touch_down(self, touch):
         # Button down animation
@@ -415,20 +551,21 @@ class AbilityButton(Widget):
 
         current_cd = self.ability.cooldown.current
         
-        self.canvas.clear()
+        self.canvas.before.clear()
         # Graphics are updated here to be more explicit than kv lang, and works.
-        with self.canvas:
+        with self.canvas.before:
             Color(rgb=(0,0,1))
             Rectangle(pos=self.pos, size=self.size)
-            Color(rgb=(0,0,0))
-        if current_cd > 0:
+
+        if self.ability.cooldown.current > 0:
             # Function for width being proportional to cd.
             cd_width = (self.ability.cooldown.current / self.ability.cooldown.default) * self.width
             cd_indicator_size = (
                 cd_width if self.ability.cooldown.current > 0 else 0,
                 self.height
                 )
-            with self.canvas:
+
+            with self.canvas.before:
                 Color(a=0.3)
                 Rectangle(size=cd_indicator_size, pos=self.pos)
 

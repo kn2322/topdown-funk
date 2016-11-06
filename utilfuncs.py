@@ -32,8 +32,12 @@ def get_direction(angle):
 
 # For circular collision detection
 def circle_collide(a, b):
-    # Confused about whether the condition should be with < or <=, probably negligible.
-    return hypot(*difference(a.center, b.center)) < a.width + b.width
+    # Confused about whether the condition should be with < or <=, negligible.
+    d = (a.width + b.width) / 2 - hypot(*difference(a.center, b.center))
+    if d > 0:
+        return d
+    else:
+        return 0
 
 # Gets x, y direction towards target.
 def get_dir_to(entity, other):
@@ -42,6 +46,12 @@ def get_dir_to(entity, other):
         x = cos(angle)
         y = sin(angle)
         return [x, y]
+
+# Applying label markups.
+def label_markup(text, tag):
+    info = tag.split('=')[0].strip('[]')
+    end_tag = '[/{}]'.format(info)
+    return tag + text + end_tag
 
 if __name__ == '__main__':
 	print('To shreds, you say?')

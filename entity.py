@@ -47,13 +47,14 @@ class Entity(Widget):
         self.velocity_multiplier = 0
         """velocity is now strictly for displacement"""
         self.velocity = Vector(0, 0)
-        self.friction = 6 # Resistance to knockback, higher is more friction.
+        self.friction = 3#6 # Resistance to knockback, higher is more friction
+        # NOTE: at 120, everything　影分身, above that, the universe collapses.
 
         self.can_be_damaged = True
         self.max_hp = 0
         self.hp = 0
 
-        self.last_pos = 0, 0
+        #self.last_pos = 0, 0
 
         # Damage done upon contact
         self.contact_damage = 0

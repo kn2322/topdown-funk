@@ -14,7 +14,7 @@ class Camera(Widget): # Widget to use the pos and size properties automatically
 
     def update(self, game):
         # A hack (..) as in __init__ right_stick's size hasn't been __init__
-        self.size = game.user_interface.right_stick.size
+        self.size = Vector(*game.user_interface.right_stick.size) * 1
         self.camerafunc(self, game.player)
         # Math to transform all drawn objects to within the window.
         self.offset = self.anchor[0] - self.x, self.anchor[1] - self.y
@@ -22,7 +22,7 @@ class Camera(Widget): # Widget to use the pos and size properties automatically
 # Player is always at center of camera, the most basic and possibly only camera
 def center_cam(camera, target):
     diff = Vector(*target.center) - camera.center
-    camera.center = Vector(*camera.center) + diff / 2 # Adds slight lag/smoothing
+    camera.center = Vector(*camera.center) + diff / 5 # Adds slight lag/smoothing
 
 if __name__ == '__main__':
     print('Here comes dat boi.')

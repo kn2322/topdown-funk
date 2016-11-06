@@ -1,0 +1,1 @@
+UPDATE_RATE = 60

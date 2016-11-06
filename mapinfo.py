@@ -17,14 +17,14 @@ class Map(Widget):
 
     MAPS = {
         'galaxy': (
-        (1600, 1200), Rectangle(size=(1600, 1200), source='./assets/maps/galaxy.jpg')
+        (820, 540), Rectangle(size=(820, 540), source='./assets/maps/galaxy.jpg')
         )
     }
 
-
         
     # not magic method to work around kv not being able to pass arguments to __init__.
-    def initialize(self, map_name):
+    def __init__(self, map_name, **kw):
+        super(Map, self).__init__(**kw)
         self.pos = 0, 0
         self.size, self.graphics = self.MAPS[map_name]
         
@@ -34,6 +34,7 @@ class Map(Widget):
         self.canvas.clear()
 
         self.graphics.pos = offset
+        self.canvas.add(Color())
         self.canvas.add(self.graphics)
 
 # Serves little purpose, since collision is handled by map

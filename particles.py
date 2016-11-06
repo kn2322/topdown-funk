@@ -33,9 +33,9 @@ class ParticleEmitter1(Widget):
             if p[0] >= self.lifetime:
                 del self.particles[idx]
             p[3] = Vector(*p[3]) + Vector(1, 0).rotate(p[4]) * p[5]
-            p[4] += 0 # direction
-            p[2] += 1 # size
-            p[5] += 0 # speed
+            p[4] += 15 # direction
+            p[2] += -0.01 # size
+            p[5] += -1 # speed
             p[0] += 1
 
         #self.p_speed %= 10
@@ -124,30 +124,30 @@ class ParticleEmitter2(Widget):
             # speed
             p[5] += 0
             # direction
-            p[4] += 5
+            #p[4] += 5
             # size
             p[2] += 0
             # time
             p[0] += 1
 
         for idx, p in enumerate(self.particles2):
-        	if p[0] >= self.lifetime2:
-        		del self.particles2[idx]
-       		p[0] += 1
+            if p[0] >= self.lifetime2:
+                del self.particles2[idx]
+            p[0] += 1
 
         if self.ellapsed < 10:
-        	self.spawn()
+            self.spawn()
         self.spawn2()
         self.draw()
         self.ellapsed += 1
-        
 
     def draw(self):
         self.canvas.clear()
         with self.canvas:
-        	for p in self.particles2:
-        		Color(rgba=p[1])
-        		Ellipse(size=(p[2], p[2]), pos=p[3])
+            for p in self.particles2:
+                p[1][1] += 0.02 # Change colour over time.
+                Color(rgba=p[1])
+                Ellipse(size=(p[2], p[2]), pos=p[3])
 
         with self.canvas:
             for p in self.particles:
@@ -159,7 +159,7 @@ class ParticleEmitter2(Widget):
         for _ in range(self.spawnrate):
             rng = self.rng_value_init
             t = 0
-            color = (random(), random(), random(), 1) # random colors!
+            color = [random(), random(), random(), 1] # random colors!
             size = rng(self.p_size)
             pos = self.pos
             direction = size * 1.2
@@ -170,7 +170,7 @@ class ParticleEmitter2(Widget):
 
     def spawn2(self):
         for i in self.particles:
-        	self.particles2.append([0, (1, 0, 0, 1), 3, i[3], 0, 0])
+            self.particles2.append([0, [1, 0, 0, 0.3], 3, i[3], 0, 0])
 
     def rng_value_init(self, value):
         if type(value) in (int, float):
@@ -187,8 +187,8 @@ if __name__ == '__main__':
         def build(self):
             Window.size = (1024, 768)
             main = Widget(center=Window.center)
-            p = ParticleEmitter1(20, 30, (0, 315), 20, 4, (1, 1, 1, 1), pos=main.center)
-            #(720, 1, (6, 25), 10, (3, 20), (1, 1, 1, 1), pos=main.center)
+            #p = ParticleEmitter1(20, 30, (0, 315), 20, 4, (1, 1, 1, 1), pos=main.center)
+            p = ParticleEmitter2(10**10, 1, (6, 25), 10, (3, 20), (1, 1, 1, 1), pos=main.center)
             Clock.schedule_interval(p.tick, 1/30)
             main.add_widget(p)
             return main

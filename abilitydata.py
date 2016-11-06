@@ -1,5 +1,6 @@
 from kivy.clock import Clock
 from kivy.vector import Vector
+from constants import UPDATE_RATE
 
 """A baseclass for all of the active abilities in the game,
 each ability is put into a data structure representing the category of it
@@ -65,7 +66,7 @@ class Cooldown:
 
 	def time_step(self):
 		if self.current > 0:
-			self.current -= 1/60
+			self.current -= 1/UPDATE_RATE
 """
 # BasicAttack
 # Not sure if useful to add another layer of abstraction. NO it is not.
@@ -115,7 +116,8 @@ class SuperSpeed(ActiveAbility):
 		a = entity.components['Action']
 		for i in a.effects:
 			# Refreshes buff if the duration and cooldown happens to overlap
-			if type(i) is type(self.effect) and i.origin_id == self:
+			#if type(i) is type(self.effect) and i.origin_id == self:
+			if i.origin_id == self:
 				i.__init__(*args)
 				return None
 		a.effects.append(self.effect(self, self.duration, self.magnitude))
@@ -153,7 +155,7 @@ class Effect:
 
 	# Called when updating action component, used for counting cooldown
 	def time_step(self):
-		self.duration -= 1/60
+		self.duration -= 1/UPDATE_RATE
 		#print('{}, {}'.format(type(self), self.duration))
 
 	# Mode system is replaced by two separate functions, to be more explicit.
@@ -190,7 +192,7 @@ class SpeedUp(Effect):
 
 	def __str__(self):
 		return '{}% speedup, {} seconds remaining.'.format(
-			self.magnitude - 1, round(self.duration / 60, 3)
+			self.magnitude - 1, round(self.duration / UPDATE_RATE, 3)
 			)
 
 class Invincibility(Effect):

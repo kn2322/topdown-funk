@@ -1,11 +1,14 @@
 from kivy.vector import Vector
-from kivy.graphics import Ellipse, Color
+from kivy.graphics import Ellipse, Color, Rectangle, PushMatrix, PopMatrix, Rotate
 from kivy.clock import Clock
-from math import sin, cos, atan2, hypot
+from kivy.animation import Animation
+from kivy.core.image import Image as CoreImage # For loading graphics properly
+from math import sin, cos, atan2, hypot, degrees
 from utilfuncs import circle_collide, difference
 from abilitydata import DamageInfo, Cooldown, Invincibility, SuperSpeed, SpeedUp
 from entity import Entity
 from functools import partial
+from constants import UPDATE_RATE
 import random
 
 """Module used to contain all of the character components in the game
@@ -18,9 +21,10 @@ class PhysicsComponent:
 
     def __init__(self): # Pls call super()... every time it's subclassed
         # direction is a value received from the input component indicating direction of movement.
-        self.direction = [0, 0]
+        self.direction = Vector(0, 0)
         self.total_velocity = [0, 0] # imperative movement + displacement.
         self.can_collide_wall = True
+        self.can_fly = False
         """
         # The controlled movement velocity.
         self.c_velocity = [0, 0]
@@ -88,9 +92,9 @@ class PhysicsComponent:
     def move(self, entity, game):
         get_value = entity.components['Action'].get_value
         multiplier = get_value(entity, 'velocity_multiplier')
-        # Multiply 'direction' with speed and divide by 60 for updates per second.
+        # Multiply 'direction' with speed and divide by UPDATE_RATE for updates per second.
         if self.direction:
-            controlled_movement = Vector(self.direction) * (multiplier / 60)
+            controlled_movement = Vector(self.direction) * (multiplier / UPDATE_RATE)
         else:
             controlled_movement = Vector(0, 0)
         displacement = entity.velocity
@@ -98,7 +102,9 @@ class PhysicsComponent:
         next_pos = Vector(*entity.pos) + self.total_velocity
 
         # Reducing displacment vector based on friction.
-        displacement *= 1 - (entity.friction / 60) if displacement.length() > 0.5 else 0 # Prevent infinitely close to 0.
+        displacement *= 1 - (entity.friction / UPDATE_RATE) if displacement.length() > 0.01 else 0 # Prevent infinitely close to 0.
+
+        entity.pos = next_pos
 
         # Checks for collision with all types, keeps recalculating physics until there are no more collisions,
         # makes entity move up to the border of an entity it collides with, while the collision funcs define behaviour afterwards.
@@ -118,11 +124,9 @@ class PhysicsComponent:
                 entity.components['Action'].collide(entity, e, e_container)
                 e.components['Action'].collide(e, entity, e_container)
         """
-        
-        entity.pos = next_pos
 
     # if cant_collide: return False else: return True is the way this should be used, called with an all().
-    def can_collide(self, entity, other):
+    def can_collide(self, entity, other, entity_container):
         return True # Can be physically resolved, called in entity container.
         
 # Convert center pos to actual pos for canvas instructions.
@@ -131,11 +135,16 @@ def center_to_pos(size, pos):
 
 class GraphicsComponent:
 
+    image = '' # Main image path, must be implemented in children.
+
     def __init__(self):
         self.graphics = None
 
     # Not handled by kv lang bc it's not explicit enough for update loop.
     def update(self, entity, game):
+        entity.canvas.clear()
+        if not game.camera.collide_widget(entity):
+            return None
         self.graphics = self.update_graphics(entity)
 
         # Apply camera offset
@@ -145,21 +154,35 @@ class GraphicsComponent:
         # Not using instruction group because iterating over it is not working.
         # Iterates because container of graphical elements is iterable.
 
-        entity.canvas.clear()
+        entity.canvas.add(PushMatrix()) # Allows rotations!
         for i in self.graphics:
             # The position of the instruction of a coordinate space of (0, 0)-(width, height) which is then offsetted by camera.
             # Works because draw_pos accounted for the original position of the entity.
-            if type(i) != Color:
-                i.pos = Vector(center_to_pos(i.size, i.pos)) + Vector(*draw_pos)
+            try:
+                i.pos = Vector(center_to_pos(i.size, i.pos)) + draw_pos
+            except AttributeError: # For matrices, color, etc.
+                if type(i) == Rotate:
+                    i.origin = Vector(*entity.size) / 2 + draw_pos # Rotation needs to be adjusted by camera offset as well.
             entity.canvas.add(i)
+        entity.canvas.add(PopMatrix())
 
     # the graphics can be altered without copying the entire update function.
     # Contains the graphical information of the entity
+    # Color() at the beginning of each set of instructions is needed, rotation is needed as well.
     def update_graphics(self, entity):
         # The default
-        g = []
+        g = [Color()]
         g.append(Ellipse(size=entity.size, pos=(entity.width/2,entity.height/2)))
         return g
+
+    def fit_image(self, entity, image_obj): # Scaling image to entity size while keeping aspect ratio. Goes larger than entity, not smaller.
+        v = Vector(*image_obj.size).normalize()
+        ratio = entity.width / min(v)
+        image_size = v * ratio
+        return image_size
+
+    def rotate_angle(self, vector): # Used to get correct angle for Rotate instruction, input is [x, y] direction.
+        return degrees(atan2(vector[1], vector[0])) - 90
 
 class ActionComponent:
 
@@ -229,7 +252,6 @@ class ActionComponent:
         pass
     """
 
-
 """The character input component only handles the movement stick, and not the
 actual ability buttons, because they are as simple as binding an ability with
 argument being the player.
@@ -244,6 +266,7 @@ class HeroInputComponent(InputComponent):
 
         self.leftdown = False # Booleans for entity state.
         self.rightdown = False
+        self.right_angle = 0 # Allow access for right stick angle without game, USE rightdown with this!!
 
     def update(self, entity, game):
         ui = game.user_interface
@@ -252,9 +275,10 @@ class HeroInputComponent(InputComponent):
             self.leftdown = True
             self.activate_left(entity, left_stick)
         else:
-            entity.components['Physics'].direction = None
+            #entity.components['Physics'].direction = [0, 0]
             self.leftdown = False
         self.rightdown = bool(ui.right_stick.angle)
+        self.right_angle = ui.right_stick.angle
 
     def activate_left(self, entity, left_stick):
         angle = left_stick.angle
@@ -266,6 +290,16 @@ class HeroInputComponent(InputComponent):
 
 class HeroPhysicsComponent(PhysicsComponent):
 
+    def __init__(self, **kw):
+        super(HeroPhysicsComponent, self).__init__(**kw)
+        self.controlled_velocity = 0 # For acceleration, acceleration is defined as SPEED_MULTIPLIER / UPDATE_RATE / 30
+        """States, for working around deceleration.
+        stopped
+        moving
+        slowing
+        """
+        self.state = 'stopped'
+
     def update(self, entity, game):
         """acomp = entity.components['Action']
 
@@ -273,13 +307,120 @@ class HeroPhysicsComponent(PhysicsComponent):
         """
         self.move(entity, game)
 
-    # TODO: Add displacement/knockback
+    def move(self, entity, game):
+        get_value = entity.components['Action'].get_value
+        multiplier = get_value(entity, 'velocity_multiplier')
+        LEFTDOWN = entity.components['Input'].leftdown
+
+        # Acceleration/Deceleration when moving.
+        ACCEL = 1/8 # Takes 8 frames to get up to speed.
+        #DECEL = 1/UPDATE_RATE Default, adds displacement equal to current controlled velocity / frames.
+        DECEL = 1 / (2 * UPDATE_RATE)
+
+        if self.state == 'stopped':
+
+            if LEFTDOWN:
+                self.state = 'moving'
+
+
+        if self.state == 'moving':
+
+            if not LEFTDOWN:
+                self.state = 'slowing'
+
+            if self.controlled_velocity <= multiplier:
+                self.controlled_velocity += multiplier * ACCEL
+
+            elif self.controlled_velocity > multiplier:
+                self.controlled_velocity = multiplier
+
+        if self.state == 'slowing':
+
+            if self.controlled_velocity: # For giving deceleration slide.
+                entity.velocity = Vector(*entity.velocity) + (Vector(*self.direction) * self.controlled_velocity * DECEL)
+                self.controlled_velocity = 0
+            else:
+                self.state = 'stopped'
+
+        displacement = entity.velocity
+        if not LEFTDOWN: # Workaround for direction still being available.
+            self.direction = [0, 0]
+
+        # / UPDATE_RATE since controlled_velocity is not divided beforehand.
+        self.total_velocity = Vector(*self.direction) * (self.controlled_velocity / UPDATE_RATE) + displacement
+        next_pos = Vector(*entity.pos) + self.total_velocity
+
+        # Reducing displacment vector based on friction.
+        displacement *= 1 - (entity.friction / UPDATE_RATE) if displacement.length() > 0.01 else 0 # Prevent infinitely close to 0.
+
+        entity.pos = next_pos
+
 
 # Job is to contain the graphical elements of the entity,
 # and handle drawing with the camera.
 class HeroGraphicsComponent(GraphicsComponent):
 
-    pass
+    image = CoreImage('assets/entities/player.png')
+
+    def __init__(self):
+        super(HeroGraphicsComponent, self).__init__()
+        r = random.random
+        #self.color = [1, 1, 1, 1]
+        self.last_direction = [0, 0]
+        self.cooldown_fx = False # not used yet.
+
+    def update_graphics(self, entity):      
+        g = []
+
+        # This code is about al dente.
+        phys = entity.components['Physics']
+        act = entity.components['Action']
+        right_angle = entity.components['Input'].right_angle
+        rightdown = entity.components['Input'].rightdown
+
+        if act.state == 'attacking' and rightdown: # Face same direction if attacking.
+            direction = cos(right_angle), sin(right_angle)
+            self.last_direction = direction
+        elif phys.direction == [0, 0]: # To keep direction facing when player is stopped.
+            direction = self.last_direction
+        else:
+            direction = phys.direction
+            self.last_direction = direction # Save last direction if moving in case entity stops
+
+        angle = self.rotate_angle(direction)
+
+        img = self.image
+        image_size = Vector(*self.fit_image(entity, img)) * 1 # Make player sprite 1.5x bigger than hitbox
+
+        attk_speed = entity.components['Action'].basic_attack_cd # Monstrous, literally cooking to al dente.
+        max_as = attk_speed.default
+        cur_as = attk_speed.current
+
+        # Prevent division by zero.
+        if max_as == 0: max_as = 0.01
+        if cur_as == 0: cur_as = 0.01
+
+        r, gr, b, a = 0, 0, 0, 1 # color channels for useful editing, gr to avoid namespace conflict.
+
+        #print('max: {}, cur: {}'.format(max_as, cur_as))
+
+        #r = 1.2 - (cur_as / max_as) # Shades of red depending on attack cd.
+
+        u = 2 - (cur_as / max_as) # Black to color.
+        r, gr, b = u, u, u
+
+        color = [r, gr, b, a]
+
+        #color = [i if i <= 1 else 0 for i in [i + random.uniform(0, 0.05) for i in self.color]]
+        #color[-1] = 1
+
+        for i in [
+            Color(rgba=color),
+            Rotate(angle=angle),
+            Rectangle(size=image_size, pos=Vector(*entity.size)/2, texture=img.texture)
+        ]:
+            g.append(i)
+        return g
 
 # The base class for player characters action components.
 class HeroActionComponent(ActionComponent):
@@ -290,11 +431,16 @@ class HeroActionComponent(ActionComponent):
         super(HeroActionComponent, self).__init__()
         self.abilities = [None, None]
         # Using cooldown object to reduce number of variables
-        self.basic_attack_cd = Cooldown(0) # The duration is attack animation duration.
+        self.basic_attack_cd = Cooldown(0) # The duration is attack cooldown duration.
+        self.attack_time = Cooldown(0.5) # The duration of attack animation, goes before basic_attack_cd starts.
+        #self.attack_time.activate() # Prime the cooldown
+
         self.exp = 0
         self.level = 0 # used for checking for level ups.
         self.lvl_boundaries = (0, 500, 7, 20) # Level increments.
         self.state = 'idle'
+
+        self.knockback = 2
 
 
     def assign_util_ability(self, ability):
@@ -312,29 +458,53 @@ class HeroActionComponent(ActionComponent):
             except AttributeError:
                 continue
 
-        self.basic_attack_cd.time_step()
+        if self.state != 'attacking': # Timestep if attack_animation is finished.
+            self.basic_attack_cd.time_step()
+
+        attk_ok = self.basic_attack_cd.current <= 0 # Store whether attack is available, as it is used often.
 
         icomp = entity.components['Input']
 
         if self.state == 'idle':
-            if icomp.rightdown:
+            if icomp.rightdown and attk_ok:
                 self.state = 'attacking'
             elif icomp.leftdown:
                 self.state = 'moving'
 
-        elif self.state == 'attacking':
-            if self.basic_attack_cd.current > 0: # If attack animation is not finished.
-                effect = SpeedUp(None, 1/60, 0.3)
+        elif self.state == 'attacking': # cd cycle of attack -> attk_time -> attk_cd -> attack
+
+            if attk_ok and icomp.rightdown:
+                self.activate_right(entity, game)
+                self.attack_time.activate() # Prime attack animation cd for next time.
+                self.basic_attack_cd.activate() # Falsify the condition of this if loop, only time_steps if attk animation is finished.
+
+            if self.attack_time.current > 0: # If attack animation is not finished.
+                self.attack_time.time_step()
+                effect = SpeedUp(None, 1/UPDATE_RATE, 0.8) # Slow movement while attacking, one frame effects.
+                self.effects.append(effect)
+                #print(self.attack_time.current)
+            else:
+            #elif icomp.rightdown:
+                #self.activate_right(entity, game)
+                #self.attack_time.activate() # Prime attack animation cd for next time.
+
+                if icomp.leftdown:
+                    self.state = 'moving'
+                else:
+                    self.state = 'idle'
+
+            """if self.basic_attack_cd.current > 0: # If attack animation is not finished.
+                effect = SpeedUp(None, 1/UPDATE_RATE, 0.8) # Slow movement while attacking.
                 self.effects.append(effect)
             elif icomp.rightdown:
                 self.activate_right(entity, game)
             elif icomp.leftdown:
                 self.state = 'moving'
             else:
-                self.state = 'idle'
+                self.state = 'idle'"""
 
         elif self.state == 'moving':
-            if icomp.rightdown:
+            if icomp.rightdown and attk_ok:
                 self.state = 'attacking'
             elif icomp.leftdown:
                 pass
@@ -344,7 +514,7 @@ class HeroActionComponent(ActionComponent):
 
         if self.exp >= self.lvl_boundaries[self.level+1]:
             self.level += 1
-            game.level_up()
+            Clock.schedule_once(game.level_up, -1)
 
 
     # Needs to know game for both ui and e_container
@@ -352,29 +522,43 @@ class HeroActionComponent(ActionComponent):
     def activate_right(self, entity, game):
         angle = game.user_interface.right_stick.angle # Angle of touch.
         # Angle is None if touch is not pressed.
-        if angle and self.basic_attack_cd.current <= 0:
+        if angle:# and self.basic_attack_cd.current <= 0:
 
             def create_proj(*args):
-                a = create_hero_projectile(Vector(*entity.center), velocity_multiplier=100) # target_pos is for curving towards a location.
+                a = create_hero_projectile(entity.center) # target_pos is for curving towards a location.
                 direction = Vector(cos(angle), sin(angle)).rotate(random.uniform(-5, 5))
                 #a.velocity_multiplier = random.uniform(400, 700) # TODO: Replace with some kwarg instead of direct access.
                 a.components['Physics'].direction = direction
-                #a.center = Vector(*a.center) + Vector(cos(angle), sin(angle)) * 3 # For spawning the missile off center.
+                a.center = Vector(*a.center) + direction * entity.width / 2 # For spawning missile at edge of entity.
                 game.e_container.add_entity(a)
 
-            for idx, _ in enumerate(range(3)): # Chain missile test.
+            def create_triple_proj(rot, *args):
+                a = create_hero_projectile(entity.center) # target_pos is for curving towards a location.
+                direction = Vector(cos(angle), sin(angle)).rotate(rot)
+                a.components['Physics'].direction = direction
+                a.center = Vector(*a.center) + direction * entity.width / 2 # For spawning missile at edge of entity.
+                game.e_container.add_entity(a)
+
+            #for idx, _ in enumerate(range(1)): # Chain missile test.
                 #Clock.schedule_once(create_proj, idx/10)
-                create_proj()
+                #create_proj()
 
-            self.basic_attack_cd.activate()
+            for rot in [-15, 0, 15]: # Chain missile test.
+                create_triple_proj(rot)
 
-            entity.velocity += -Vector(cos(angle), sin(angle)).rotate(random.randint(-10, 10)) * 2 # Recoil to give weight, multiplier is magnitude.
+            # Moved to be decoupled from activate_right.
+            #self.basic_attack_cd.activate()
+            #self.attack_time.activate() # Prime attack animation cd for next time.
+
+            entity.velocity += -Vector(cos(angle), sin(angle)) * 2 # Recoil to give weight, multiplier is magnitude.
         else:
             pass
             #self.basic_attack_cd.time_step()
 
     def collide(self, entity, other, entity_container):
-        pass
+        if other.name in entity_container.enemies:
+            diff = Vector(*other.center) - entity.center
+            other.velocity += diff.normalize() * self.knockback
         """ Deprecated because of becoming invincible before receiving damage, functionality moved to on_receive_damage.
         if other.name in entity_container.enemies:
             if Invincibility in (type(i) for i in self.effects):
@@ -395,6 +579,7 @@ class HeroActionComponent(ActionComponent):
         self.exp += amount
 
     def destroy(self, entity, game):
+        #Clock.schedule_once(game.game_over, -1)
         game.game_over()
 
 
@@ -419,7 +604,7 @@ class BaseAIComponent(InputComponent):
 
         self.state = 'IDLE'
         # Seconds * update speed.
-        self.cooldown = 2 * 60
+        self.cooldown = 2 * UPDATE_RATE
 
     def update(self, entity, game):
         if self.cooldown <= 0:
@@ -469,14 +654,28 @@ class RiotPolicePhysicsComponent(PhysicsComponent):
 
 class RiotPoliceGraphicsComponent(GraphicsComponent):
 
+    image = CoreImage('assets/entities/riotpolice.png')
+
     def update_graphics(self, entity):
         g = []
-        g.append(Color())
+
+        img = self.image
+        angle = self.rotate_angle(entity.components['Physics'].direction)
+        image_size = self.fit_image(entity, img) * 1.5
+        
+        for i in [
+            Color(),
+            Rotate(angle=angle),
+            Rectangle(pos=Vector(*entity.size)/2, size=image_size, texture=img.texture)
+        ]:
+            g.append(i)
+
+        """ Provisional graphics
         g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
         g.append(Ellipse(size=(10,10), pos=(0, entity.height/2)))
         g.append(Ellipse(size=(10,10), pos=(entity.width/2, entity.height)))
         g.append(Ellipse(size=(10,10), pos=(entity.width, entity.height/2)))
-        g.append(Ellipse(size=(10,10), pos=(entity.width/2, 0)))
+        g.append(Ellipse(size=(10,10), pos=(entity.width/2, 0)))"""
         return g
 
 class RiotPoliceActionComponent(ActionComponent):
@@ -498,14 +697,277 @@ class RiotPoliceActionComponent(ActionComponent):
             other.receive_damage(dmg_inf)
             # Knockback code on contact.
             # TODO: Add variable for knockback magnitude.
-            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 8
+            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 4
         elif other.name in entity_container.enemies:
-            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 2
+            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 1
 
     def destroy(self, entity, game):
         game.player.receive_exp(entity.exp)
-        game.decal_engine.add_decal(entity.center)
+        game.decal_engine.add_decal(entity.center, 'splash')
         game.e_container.remove_widget(entity)
+
+class SinerInputComponent(InputComponent):
+    # No need for Ω AI Ω, since this entity doesn't respond to player.
+    def __init__(self, origin, y_direction):
+        self.origin = origin # Starting location.
+        # Properties of a sin wave.
+        self.magnitude = 0 # Distance of peaks from origin y.
+        self.x_speed = 1.8 #2 # Horizontal speed/Overall cycle speed.
+        self.frequency = 0.015#0.03 # Vertical speed, best below ~0.1, lower is slower.
+        self.time = 0 # Elapsed time.
+
+        self.position = self.origin # Position the entity SHOULD be at.
+
+        self.x_direction = 1 # Left or right, -1 or 1.
+
+        self.y_direction = y_direction # +sin(x) or -sin(x)
+
+    def update(self, entity, game):
+        self.position = self.get_ideal_path(entity, game)
+
+        self.time += self.x_direction
+
+    def get_ideal_path(self, entity, game):
+        # Function for determining where the entity SHOULD be.
+        game_map = game.game_map
+        self.magnitude = game_map.height / 2 - 10
+
+        t = self.time
+        x, y = self.origin
+        y += self.magnitude * self.y_direction * sin(self.frequency * t)
+        x += t * self.x_speed
+
+        # Bounce off left and right walls.
+        if entity.right >= game_map.right:
+            self.x_direction = -1
+
+        elif entity.x <= game_map.x:
+            self.x_direction = 1
+
+        return [x, y]
+
+
+    def reverse(self):
+        pass
+
+class SinerPhysicsComponent(PhysicsComponent):
+
+    def __init__(self):
+        super(SinerPhysicsComponent, self).__init__()
+        self.can_collide_wall = False # Cannot collide with walls.
+        self.can_fly = True
+    
+    def collide_wall(self, entity, entity_container):
+        pass
+
+    def can_collide(self, entity, other, entity_container):
+        # Cannot collide with anything, gives knockback instead.
+        if other.name in entity_container.players:
+            return True
+        else:
+            return False
+
+    def move(self, entity, game):
+        entity.pos = entity.components['Input'].position
+
+class SinerGraphicsComponent(GraphicsComponent):
+    
+    image = CoreImage('assets/entities/siner.png')
+
+    def __init__(self):
+        super(SinerGraphicsComponent, self).__init__()
+        self.angle = Vector(1, 0) # Static direction not affected by movement.
+
+    def update_graphics(self, entity):
+        g = []
+
+        img = self.image
+        angle = self.rotate_angle(self.angle)
+
+        self.angle = self.angle.rotate(-3) # Rotates at set rate.
+
+        image_size = self.fit_image(entity, img) * 1.5
+        
+        for i in [
+            Color(),
+            Rotate(angle=angle),
+            Rectangle(pos=Vector(*entity.size)/2, size=image_size, texture=img.texture)
+        ]:
+            g.append(i)
+
+        return g
+
+class SinerActionComponent(ActionComponent):
+
+    def __init__(self):
+        super(SinerActionComponent, self).__init__()
+        self.knockback = 4
+    
+    def collide(self, entity, other, entity_container):
+        if other.name in entity_container.players:
+            dmg_inf = DamageInfo(
+                entity,
+                self.get_value(entity, 'contact_damage'), # damage is gotten through get_value interface.
+                'contact' # dmg_type
+                )
+            other.receive_damage(dmg_inf)
+            # Gives knockback to players.
+            other.velocity += (Vector(*other.center) - entity.center).normalize() * self.knockback
+
+class LancerInputComponent(BaseAIComponent):
+    
+    def __init__(self):
+
+        self.states = {
+        'COOLDOWN': None,
+        'CHARGING': None
+        }
+        self.state = 'COOLDOWN'
+        self.cooldown = Cooldown(3)
+        # Start on cd.
+        self.cooldown.activate()
+        self.rotation_speed = 60 # / UPDATERATE
+
+        self.direction = Vector(1, 0)
+
+    def update(self, entity, game):
+
+        #print(self.direction)
+
+        player = game.player
+        #physics = entity.components['Physics']
+
+        if self.state == 'COOLDOWN':
+
+            if self.cooldown.current <= 0:
+                self.state = 'CHARGING'
+                self.cooldown.activate()
+
+            else:
+                d = Vector(*player.center) - entity.center
+                #angle = atan2(d[1], d[0])
+                a_v = self.rotation_speed / UPDATE_RATE # angular velocity.
+
+                # The difference between current and ideal directions.
+                rot_direction = self.direction.angle(d)
+                
+                if rot_direction == 0:
+                    # At ideal angle.
+                    pass
+                elif rot_direction > 0:
+                    # Closest rotation is negative.
+                    self.direction = self.direction.rotate(-a_v)
+                else:
+                    # Closest rotation is positive.
+                    self.direction = self.direction.rotate(a_v)
+
+                self.cooldown.time_step()
+
+        elif self.state == 'CHARGING':
+            pass#self.state = 'COOLDOWN'
+
+class LancerPhysicsComponent(PhysicsComponent):
+    
+    def __init__(self, velocity_multiplier):
+        # v_m is 0 by default, instead value is passed to here from creation func.
+        super(LancerPhysicsComponent, self).__init__()
+        # Charge speed is based off of velocity multiplier for easy changes.
+        self.charging_speed = velocity_multiplier * 2
+        self.charge_duration = Cooldown(1)
+        self.charge_duration.activate()
+        """ Not in use due to static charge velocity.
+        def velocity_func(t):
+            pass
+        self.velocity_func = """
+
+    def update(self, entity, game):
+        super(LancerPhysicsComponent, self).update(entity, game)
+        self.direction = entity.components['Input'].direction
+        state = entity.components['Input'].state
+        
+        if state == 'CHARGING':
+            if self.charge_duration.current > 0:
+                self.charge_duration.time_step()
+                # Acceleration
+                entity.velocity_multiplier = self.charging_speed
+            
+            else:
+                self.stop_charge(entity)
+
+    def stop_charge(self, entity): # icomp is input component.
+        self.charge_duration.activate()
+        entity.velocity_multiplier = 0
+
+        # To give slide.
+        entity.velocity += self.direction * self.charging_speed / UPDATE_RATE
+        entity.components['Input'].state = 'COOLDOWN'
+
+    def collide_wall(self, entity, entity_container):
+        if entity.components['Input'].state == 'CHARGING':
+            entity.components['Action'].missiles(entity, entity_container)
+            self.stop_charge(entity)
+
+
+    def charge(self):
+        pass # self.velocity
+
+class LancerGraphicsComponent(GraphicsComponent):
+    
+    image = CoreImage('assets/entities/lancer.png')
+
+    def update_graphics(self, entity):
+
+        img = self.image
+        angle = self.rotate_angle(entity.components['Physics'].direction)
+        image_size = self.fit_image(entity, img)
+
+        g = []
+
+        for i in [
+            Color(),
+            Rotate(angle=angle),
+            Rectangle(pos=Vector(*entity.size)/2, size=image_size, texture=img.texture)
+        ]:
+            g.append(i)
+
+        return g
+
+class LancerActionComponent(ActionComponent):
+
+    def __init__(self):
+        super(LancerActionComponent, self).__init__()
+        self.knockback = 8
+
+    def collide(self, entity, other, entity_container):
+        if other.name in entity_container.players:
+            # Deal dmg to players.
+            dmg_inf = DamageInfo(
+                entity,
+                self.get_value(entity, 'contact_damage'), # damage is gotten through get_value interface.
+                'contact' # dmg_type
+                )
+            other.receive_damage(dmg_inf)
+
+        if entity.components['Input'].state == 'CHARGING':
+            # Stop charging upon hitting player, reason is so they do not appear to defy physics.
+            entity.components['Physics'].stop_charge(entity)
+
+            # Knocks back anyone
+            other.velocity += (Vector(*other.center) - entity.center).normalize() * self.knockback
+
+            self.missiles(entity, entity_container)
+
+    def missiles(self, entity, entity_container):
+        # Experimental missiles.
+        for i in [-45, 45]:
+            a = create_hero_projectile(entity.center, knockback=2)
+
+            a.components['Action'].damage = 0
+
+            direction = entity.components['Physics'].direction
+            direction = direction.rotate(i)
+            a.components['Physics'].direction = direction
+            entity_container.add_entity(a)
 
 """Below here are all of the 'sub entities' created by entities (projectiles, etc.)
 Each one will have a comment as to what entity(s) it belongs to.
@@ -519,18 +981,21 @@ class HeroProjectilePhysicsComponent(PhysicsComponent):
     def __init__(self, target_pos=None, **kw):
         super(HeroProjectilePhysicsComponent, self).__init__(**kw)
         self.target_pos = target_pos # Aimed position, NOT IN USE.
+        self.can_fly = True
 
     def update(self, entity, game):
         super(HeroProjectilePhysicsComponent, self).update(entity, game)
-        self.direction = Vector(*self.direction).rotate(random.choice([2, -2, 0])) # 'shakes' the missile. Testing.
+        #self.direction = Vector(*self.direction).rotate(random.choice([2, -2, 0])) # 'shakes' the missile. Testing.
 
-    def can_collide(self, entity, other):
+    def can_collide(self, entity, other, entity_container):
         return False # Shouldn't resolve with anything.
 
     def collide_wall(self, entity, entity_container):
         entity.components['Action'].collide_wall(entity, entity_container) # Calls into exploding upon hitting wall.
 
 class HeroProjectileGraphicsComponent(GraphicsComponent):
+
+    image = CoreImage('assets/entities/player_missile.png') # Shared instance of the image texture.
 
     def __init__(self, **kwargs):
         super(HeroProjectileGraphicsComponent, self).__init__(**kwargs)
@@ -539,14 +1004,23 @@ class HeroProjectileGraphicsComponent(GraphicsComponent):
     def update_graphics(self, entity):
         r = random.random
         state = entity.components['Action'].state
+        angle = entity.components['Physics'].direction
+        angle = self.rotate_angle(angle)
         g = []
         if state == 'initial':
-            g.append(Color())
-            g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
+            img = self.image
+            image_size = self.fit_image(entity, img)
+            ins = [
+            Color(), 
+            Rotate(angle=angle, axis=(0, 0, 1)), # origin is omitted, set in update_graphics.
+            Rectangle(size=image_size, pos=(entity.width/2, entity.height/2), texture=img.texture),
+            ]
+            for i in ins:
+                g.append(i)
         else:
             colors = self.generate_explosion()
             g.append(colors[0])
-            g.append(Ellipse(size=(entity.width * 1.5, entity.height * 1.5), pos=(entity.width/2, entity.height/2)))
+            g.append(Ellipse(size=Vector(*entity.size)*1.5, pos=(entity.width/2, entity.height/2)))
             #g.append(colors[1])
             #g.append(Ellipse(size=entity.size, pos=(entity.width/2, entity.height/2)))
             
@@ -592,17 +1066,22 @@ class HeroProjectileActionComponentPROTOTYPE(ActionComponent):
 
 class HeroProjectileActionComponent(ActionComponent):
 
-    def __init__(self, dmg=1):
+    def __init__(self, knockback, dmg=1):
         super(HeroProjectileActionComponent, self).__init__()
         self.damage = dmg
         self.states = ['initial', 'exploding', 'exploded']
         self.state = 'initial'
         self.explode_time = 0
+        self.knockback = knockback
 
     # No need for active effects on a projectile.
     def update(self, entity, game):
         if self.state == 'initial':
-            entity.velocity_multiplier += (10 * 30) / 60 # Acceleration, 1st term is 'meter', where 10 pixels is a meter. 2nd is how many m/s acceleration.
+            entity.velocity_multiplier += (10 * 40) / UPDATE_RATE # Acceleration, 1st term is 'meter', where 10 pixels is a meter. 2nd is how many m/s acceleration.
+        
+        elif self.state == 'exploded':
+            entity.velocity_multiplier = 200 # Causes a 'blast' visual effect on the target.
+        
         if self.explode_time > 0:
             self.state = 'exploded'
             Clock.schedule_once(lambda dt: game.e_container.remove_widget(entity), 0.2)
@@ -613,12 +1092,15 @@ class HeroProjectileActionComponent(ActionComponent):
     def collide(self, entity, other, entity_container):
         if self.state == 'initial': 
 
-            def death_memes(dt):
+            def death_memes(*args):
                 self.explode(entity)
                 self.state = 'exploding'
 
             if other.name in entity_container.enemies:
-                death_memes(None)
+                death_memes()
+
+            elif other.name in entity_container.terrain:
+                death_memes()
 
             elif other.name == entity.name and other.components['Action'].state == 'exploding':
             # Temporary check for missiles exploding eachother, needs to be changed for different missile types.
@@ -635,8 +1117,11 @@ class HeroProjectileActionComponent(ActionComponent):
                 #entity_velocity = Vector(*entity.components['Physics'].total_velocity).normalize()
                 #knockback = (difference + entity_velocity) / 2
                 # Above comments are pre explosion knockback code.
-                percent = (difference.length() - other.width) / entity.width # Distance from center of explosion
-                magnitude =  -15 * percent + 12 # The magnitude of the knockback.
+                percent = (difference.length() - (other.width / 2)) / entity.width # Edge distance from center of explosion
+                percent = percent if percent > 0 else 0 # Prevents 'negative distance' if other covers the center point of explosion.
+                #percent = percent if percent > 0
+                # Results in 1/3 knockback at max explosion range.
+                magnitude =  (-(2*self.knockback/3) * percent) + self.knockback # The magnitude of the knockback. First term is function which reduces knockback based on distance.
                 other.velocity += difference.normalize() * magnitude
 
 
@@ -646,12 +1131,11 @@ class HeroProjectileActionComponent(ActionComponent):
 
 
         elif self.state == 'exploded':
-            entity.velocity_multiplier = 150 # Causes a 'blast' visual effect on the target.
-            
+            pass
 
     def explode(self, entity):
         c = [entity.center_x, entity.center_y][:]
-        entity.size = (35, 35)
+        entity.size = (45, 45)
         entity.center = c
         entity.velocity_multiplier = 0
         entity.components['Physics'].can_collide_wall = False # So dirty access, better change, stops explosions from being resolved.
@@ -666,18 +1150,119 @@ class HeroProjectileActionComponent(ActionComponent):
     def on_receive_damage(self, *args):
         pass
 
+"""Below here are map object classes (pillars, walls, etc.)
+"""
 
+class PillarPhysicsComponent(PhysicsComponent):
 
+    def __init__(self, center):
+        super(PillarPhysicsComponent, self).__init__()
+        self.eternal_rest = center
+    
+    def move(self, entity, game): # Redundant since move() is called from update()
+        pass
+
+    def update(self, entity, game):
+        entity.center = self.eternal_rest # Pillars do not move from collision.
+
+class PillarGraphicsComponent(GraphicsComponent):
+    
+    image = CoreImage('assets/entities/emily.png')
+
+    def update_graphics(self, entity):
+        g = [Color()]
+        img = self.image
+        image_size = Vector(*self.fit_image(entity, img))
+
+        g.append(Rectangle(size=image_size, pos=Vector(*entity.size)/2, texture=img.texture))
+
+        return g
+
+class PillarActionComponent(ActionComponent):
+    
+    def on_receive_damage(self, entity, damage_info):
+        pass
+
+    def update(self, entity, game):
+        pass
+
+"""Below here are powerups.
+"""
+
+class PowerupPhysicsBase(PhysicsComponent):
+    
+    def can_collide(*args):
+        return False
+
+    def move(*args):
+        return None
+
+class PowerupGraphicsBase(GraphicsComponent):
+    
+    image = ''
+
+    def __init__(self):
+        super(PowerupGraphicsBase, self).__init__()
+        self.time = 0 # For actions upon spawning.
+
+    def update(self, entity, game):
+        super(PowerupGraphicsBase, self).update(entity, game)
+        self.time += 1
+
+    def init_anim(self, entity): # Flash when spawned, call in update_graphics.
+        t = self.time / 60 # Time elapsed in seconds
+        r = 0.8
+        g = 0.8
+        b = 1
+        color = (r, g, b, 1)
+        size = (entity.width, entity.height * t) # Grow in height.
+        return [Color(rgba=color), 
+                Rectangle(pos=entity.pos, size=size),
+                Color()]
+
+class PowerupActionBase(ActionComponent):
+
+    def __init__(self):
+        super(PowerupActionBase, self).__init__()
+        self.dead = False # Flag to disable powerups if already collected.
+
+    def destroy(self, entity, game):
+        game.e_container.remove_widget(entity)
+
+    def effect(self):
+        # self may need to be replaced with type(self)
+        return SpeedUp(self, 12, 3) # First arg is origin_id, which is hacky.
+    
+    def collide(self, entity, other, entity_container):
+        if self.dead:
+            return None
+
+        if other.name in entity_container.players:
+            ac = other.components['Action'].effects
+            for effect in ac: # Take care: temp variable effect can override namespaces.
+                if effect.origin_id == self: # Prevent effect stacking.
+                    break
+            else:
+                ac.append(self.effect()) # Give effect to player, then destroy self.
+
+            self.dead = True
+            
+            def death(self):
+                entity_container.remove_widget(entity)
+            anim = Animation(size=(1, 1), pos=entity.center, duration=0.5)
+            anim.start(entity)
+            Clock.schedule_once(death, 2)
+            
 """Below here are entity creation functions, includes:
 components, entity, various attributes.
 """
 
 # Window.center is to be changed to starting position on the game map
-def create_hero(center, size=(16, 16)):
+def create_hero(center, size=(48, 48)):
     # TODO: Add error checking if the name is not in any valid names.
     e = Entity(center=center, size=size)
-    chardata = {'name': 'test_hero', 'max_hp': 20, 'hp': 20, 
-        'velocity_multiplier': 300, 'attack_speed': 0.15
+    chardata = {'name': 'test_hero', 'max_hp': 5, 'hp': 5,
+        'velocity_multiplier': 150, 'attack_speed': 0.3
         }
     for key, val in chardata.items():
         e.__dict__[key] = val
@@ -689,7 +1274,7 @@ def create_hero(center, size=(16, 16)):
     # The add_widget step is not in the function, so it's decoupled.
     return e
 
-def create_hero_projectile(center, size=(6, 6), velocity_multiplier=100, target_pos=None): # target_pos is for missile curving.
+def create_hero_projectile(center, size=(16, 16), velocity_multiplier=100, target_pos=None, knockback=8): # target_pos is for missile curving.
     e = Entity(size=size)
     e.center = center
     chardata = {'name': 'test_projectile', 'max_hp': 1, 'hp': 1,
@@ -700,12 +1285,12 @@ def create_hero_projectile(center, size=(6, 6), velocity_multiplier=100, target_
     e.components['Input'] = None
     e.components['Physics'] = HeroProjectilePhysicsComponent(target_pos)
     e.components['Graphics'] = HeroProjectileGraphicsComponent()
-    e.components['Action'] = HeroProjectileActionComponent()
+    e.components['Action'] = HeroProjectileActionComponent(knockback)
     return e
 
-def create_riot_police(center, size=(16, 16)):
+def create_riot_police(center, size=(24, 24)):
     e = Entity(center=center, size=size)
-    chardata = {'name': 'Riot Police', 'max_hp': 3, 'hp': 3, 'velocity_multiplier': 125,
+    chardata = {'name': 'Riot Police', 'max_hp': 4, 'hp': 4, 'velocity_multiplier': 30,
         'contact_damage': 1, 'exp': 1
                 }
     for key, val in chardata.items():
@@ -715,3 +1300,56 @@ def create_riot_police(center, size=(16, 16)):
     e.components['Graphics'] = RiotPoliceGraphicsComponent()
     e.components['Action'] = RiotPoliceActionComponent()
     return e
+
+def create_siner(center, y_direction=1, size=(24, 24)):
+    e = Entity(center=center, size=size)
+    chardata = {'name': 'Siner', 'max_hp': 2, 'hp': 2, 'velocity_multiplier': 0,
+        'contact_damage': 1, 'exp': 1
+                }
+    for key, val in chardata.items():
+        e.__dict__[key] = val
+    e.components['Input'] = SinerInputComponent(origin=center, y_direction=y_direction)
+    e.components['Physics'] = SinerPhysicsComponent()
+    e.components['Graphics'] = SinerGraphicsComponent()
+    e.components['Action'] = SinerActionComponent()
+    return e
+
+def create_lancer(center, velocity_multiplier=175, size=(24, 24)):
+    e = Entity(center=center, size=size)
+    chardata = {'name': 'Lancer', 'max_hp': 3, 'hp': 3, 'velocity_multiplier': 0,
+        'contact_damage': 1, 'exp': 1, 'friction': 5
+                }
+    for key, val in chardata.items():
+        e.__dict__[key] = val
+    e.components['Input'] = LancerInputComponent()
+    e.components['Physics'] = LancerPhysicsComponent(velocity_multiplier)
+    e.components['Graphics'] = LancerGraphicsComponent()
+    e.components['Action'] = LancerActionComponent()
+    return e
+
+def create_pillar(center, size=(64, 64)):
+    e = Entity(center=center, size=size)
+    chardata = {'name': 'Pillar', 'max_hp': 1, 'hp': 1, 'velocity_multiplier': 0,
+        'contact_damage': 0, 'exp': 0, 'friction': 0
+                }
+    for key, val in chardata.items():
+        e.__dict__[key] = val
+    e.components['Input'] = None
+    e.components['Physics'] = PillarPhysicsComponent(center)
+    e.components['Graphics'] = PillarGraphicsComponent()
+    e.components['Action'] = PillarActionComponent()
+    return e
+
+def create_powerup(center, size=(48, 48)):
+    e = Entity(center=center, size=size)
+    chardata = {'name': 'TestPowerup', 'max_hp': 1, 'hp': 1, 'velocity_multiplier': 0,
+        'contact_damage': 0, 'exp': 0, 'friction': 0
+                }
+    for key, val in chardata.items():
+        e.__dict__[key] = val
+    e.components['Input'] = None
+    e.components['Physics'] = PowerupPhysicsBase()
+    e.components['Graphics'] = PowerupGraphicsBase()
+    e.components['Action'] = PowerupActionBase()
+    return e
+
