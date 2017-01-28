@@ -81,6 +81,7 @@ Builder.load_string("""
                 pos: self.pos
         Label:
             center: self.parent.center
+            font_size: 24
             text: 'Super Secret Settings'
 
     FloatLayout:
@@ -277,8 +278,6 @@ class UI(Widget):
         for i in self.independent.children:
             i.update(game)
 
-        self.right_stick.update(game)
-
     def pause(self):
         self.game.pause()
 
@@ -323,6 +322,11 @@ class RightStick(Widget):
         super(RightStick, self).__init__(**kwargs)
         # None so conditions in which direction to face can be done with if rightstick.angle...
         self.angle = None
+        # Controller solution.
+        self.kb_status = {i: False for i in ['1', '2', '3', '4']}
+        self.key_directions = {'1': Vector(1, 0), '2': Vector(-1, 0), '3': Vector(0, 1), '4': Vector(0, -1)}
+
+        self.mode = 'TOUCH'
 
     def on_touch_down(self, touch):
         self.touch_handler(touch)
@@ -334,14 +338,38 @@ class RightStick(Widget):
         self.angle = None
 
     def touch_handler(self, touch):
+        if not self.mode == 'TOUCH':
+            return None
         if self.collide_point(*touch.pos):
             d = difference(self.center, touch.pos)
             self.angle = atan2(d[1], d[0])
         else:
             self.angle = None
 
-    def update(self, game):
-        pass
+    # Temporary controller solution.
+    def on_key_down(self, keycode):
+        if not self.mode == 'GAME_PAD':
+            return None
+        self.kb_status[keycode] = True
+        self.update()
+
+    def on_key_up(self, keycode):
+        if not self.mode == 'GAME_PAD':
+            return None
+        self.kb_status[keycode] = False
+        self.update()
+
+    def update(self): # THIS IS NOT CALLED FROM THE MAIN GAME UPDATE LOOPS.
+        # Controller solution.
+        if any(self.kb_status.values()):
+            kb_status = [i for i, status in self.kb_status.items() if status]
+            # reduce to allow adding with vectors, since sum() does not.
+            direction = reduce(lambda a, b: a + b, [self.key_directions[i] for i in kb_status])
+            self.angle = atan2(direction[1], direction[0])
+            if not self.angle:
+                self.angle = 0.01
+        else:
+            self.angle = None
 
 class LeftStick(Widget):
 
@@ -362,12 +390,20 @@ class LeftStick(Widget):
 
     def on_key_down(self, keyboard, keycode, text, modifiers): # Mandatory arguments, keycode in form (int, letter)
         #print('{} has been pressed.'.format(keycode))
+        right_stick = self.parent.parent.parent.parent.right_stick
+        if keycode[1] in ['1', '2', '3', '4']:
+            right_stick.on_key_down(keycode[1])
 
         if keycode[1] in self.kb_status.keys():
             self.kb_status[keycode[1]] = True
             self.update()
 
     def on_key_up(self, keyboard, keycode):
+        right_stick = self.parent.parent.parent.parent.right_stick
+
+        if keycode[1] in ['1', '2', '3', '4']:
+            right_stick.on_key_up(keycode[1])
+
         if keycode[1] in self.kb_status.keys():
             self.kb_status[keycode[1]] = False
             self.update()

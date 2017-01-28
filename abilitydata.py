@@ -43,7 +43,7 @@ on the attacker, damage type, and any other useful information.
 """
 class DamageInfo:
 
-	damage_types = ['projectile', 'contact']
+	damage_types = ['projectile', 'contact', 'absolute']
 
 	def __init__(self, attacker, amount, dmg_type):
 		self.attacker = attacker

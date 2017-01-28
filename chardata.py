@@ -102,7 +102,8 @@ class PhysicsComponent:
         next_pos = Vector(*entity.pos) + self.total_velocity
 
         # Reducing displacment vector based on friction.
-        displacement *= 1 - (entity.friction / UPDATE_RATE) if displacement.length() > 0.01 else 0 # Prevent infinitely close to 0.
+        entity.velocity *= (1 - entity.friction/UPDATE_RATE) if displacement.length() > 0.01 else 0 # Prevent infinitely close to 0.
+        #entity.velocity *= 1 / ((2 / UPDATE_RATE) * displacement.length() + 1) # Diminishing returns, moved to player.
 
         entity.pos = next_pos
 
@@ -241,6 +242,8 @@ class ActionComponent:
         #print('damaged, %s' % self.get_value(entity, 'can_be_damaged'))
         if self.get_value(entity, 'can_be_damaged'):
             entity.hp -= damage_info.amount
+        elif damage_info.type == 'absolute': # can't evade abs dmg bois.
+            entity.hp -= damage_info.amount 
         #attacker = damage_info.attacker
 
     """ Changed system to globallly accessible player exp, and adding to that.
@@ -315,7 +318,7 @@ class HeroPhysicsComponent(PhysicsComponent):
         # Acceleration/Deceleration when moving.
         ACCEL = 1/8 # Takes 8 frames to get up to speed.
         #DECEL = 1/UPDATE_RATE Default, adds displacement equal to current controlled velocity / frames.
-        DECEL = 1 / (2 * UPDATE_RATE)
+        DECEL = 1 / (1.5 * UPDATE_RATE)
 
         if self.state == 'stopped':
 
@@ -342,7 +345,11 @@ class HeroPhysicsComponent(PhysicsComponent):
             else:
                 self.state = 'stopped'
 
-        displacement = entity.velocity
+        if False:#Vector(*entity.velocity).length() > 5: # Speed cap.
+            entity.velocity = Vector(*entity.velocity).normalize() * 5
+            displacement = entity.velocity
+        else:
+            displacement = entity.velocity
         if not LEFTDOWN: # Workaround for direction still being available.
             self.direction = [0, 0]
 
@@ -352,6 +359,7 @@ class HeroPhysicsComponent(PhysicsComponent):
 
         # Reducing displacment vector based on friction.
         displacement *= 1 - (entity.friction / UPDATE_RATE) if displacement.length() > 0.01 else 0 # Prevent infinitely close to 0.
+        entity.velocity *= 1 / ((1 / UPDATE_RATE) * displacement.length() + 1) # Diminishing returns for high knockback
 
         entity.pos = next_pos
 
@@ -573,6 +581,8 @@ class HeroActionComponent(ActionComponent):
         if self.get_value(entity, 'can_be_damaged'):
             entity.hp -= damage_info.amount
             self.effects.append(Invincibility(self, 0.5))
+        elif damage_info.type == 'absolute': # can't evade abs dmg bois.
+            entity.hp -= damage_info.amount 
 
     def on_receive_exp(self, entity, amount): # Unique to player action component.
         print('Player has received {} exp'.format(amount))
@@ -580,7 +590,7 @@ class HeroActionComponent(ActionComponent):
 
     def destroy(self, entity, game):
         #Clock.schedule_once(game.game_over, -1)
-        game.game_over()
+        game.game_over(entity)
 
 
 """Below this point are enemy components.
@@ -712,7 +722,7 @@ class SinerInputComponent(InputComponent):
         self.origin = origin # Starting location.
         # Properties of a sin wave.
         self.magnitude = 0 # Distance of peaks from origin y.
-        self.x_speed = 1.8 #2 # Horizontal speed/Overall cycle speed.
+        self.x_speed = 3#1.8 # Horizontal speed/Overall cycle speed.
         self.frequency = 0.015#0.03 # Vertical speed, best below ~0.1, lower is slower.
         self.time = 0 # Elapsed time.
 
@@ -801,7 +811,7 @@ class SinerActionComponent(ActionComponent):
 
     def __init__(self):
         super(SinerActionComponent, self).__init__()
-        self.knockback = 4
+        self.knockback = 64 # KNOCKOASKOBACK, 64 is freight train level.
     
     def collide(self, entity, other, entity_container):
         if other.name in entity_container.players:
@@ -873,7 +883,7 @@ class LancerPhysicsComponent(PhysicsComponent):
         super(LancerPhysicsComponent, self).__init__()
         # Charge speed is based off of velocity multiplier for easy changes.
         self.charging_speed = velocity_multiplier * 2
-        self.charge_duration = Cooldown(1)
+        self.charge_duration = Cooldown(0.5)
         self.charge_duration.activate()
         """ Not in use due to static charge velocity.
         def velocity_func(t):
@@ -936,7 +946,7 @@ class LancerActionComponent(ActionComponent):
 
     def __init__(self):
         super(LancerActionComponent, self).__init__()
-        self.knockback = 8
+        self.knockback = 10
 
     def collide(self, entity, other, entity_container):
         if other.name in entity_container.players:
@@ -947,6 +957,7 @@ class LancerActionComponent(ActionComponent):
                 'contact' # dmg_type
                 )
             other.receive_damage(dmg_inf)
+            other.velocity += (Vector(*other.center) - entity.center).normalize() * self.knockback / 5
 
         if entity.components['Input'].state == 'CHARGING':
             # Stop charging upon hitting player, reason is so they do not appear to defy physics.
@@ -954,13 +965,12 @@ class LancerActionComponent(ActionComponent):
 
             # Knocks back anyone
             other.velocity += (Vector(*other.center) - entity.center).normalize() * self.knockback
-
             self.missiles(entity, entity_container)
 
     def missiles(self, entity, entity_container):
         # Experimental missiles.
         for i in [-45, 45]:
-            a = create_hero_projectile(entity.center, knockback=2)
+            a = create_hero_projectile(entity.center, knockback=3)
 
             a.components['Action'].damage = 0
 
@@ -1121,7 +1131,7 @@ class HeroProjectileActionComponent(ActionComponent):
                 percent = percent if percent > 0 else 0 # Prevents 'negative distance' if other covers the center point of explosion.
                 #percent = percent if percent > 0
                 # Results in 1/3 knockback at max explosion range.
-                magnitude =  (-(2*self.knockback/3) * percent) + self.knockback # The magnitude of the knockback. First term is function which reduces knockback based on distance.
+                magnitude =  (-(2.5*self.knockback/3) * percent) + self.knockback # The magnitude of the knockback. First term is function which reduces knockback based on distance.
                 other.velocity += difference.normalize() * magnitude
 
 
@@ -1158,6 +1168,7 @@ class PillarPhysicsComponent(PhysicsComponent):
     def __init__(self, center):
         super(PillarPhysicsComponent, self).__init__()
         self.eternal_rest = center
+        self.can_fly = True
     
     def move(self, entity, game): # Redundant since move() is called from update()
         pass
@@ -1167,12 +1178,12 @@ class PillarPhysicsComponent(PhysicsComponent):
 
 class PillarGraphicsComponent(GraphicsComponent):
     
-    image = CoreImage('assets/entities/emily.png')
+    image = CoreImage('assets/entities/pillar.png')
 
     def update_graphics(self, entity):
         g = [Color()]
         img = self.image
-        image_size = Vector(*self.fit_image(entity, img))
+        image_size = Vector(*self.fit_image(entity, img)) * 1.5
 
         g.append(Rectangle(size=image_size, pos=Vector(*entity.size)/2, texture=img.texture))
 
@@ -1180,8 +1191,9 @@ class PillarGraphicsComponent(GraphicsComponent):
 
 class PillarActionComponent(ActionComponent):
     
-    def on_receive_damage(self, entity, damage_info):
-        pass
+    # Can receive damage, but won't get destroyed?
+    #def on_receive_damage(self, entity, damage_info):
+        #pass
 
     def update(self, entity, game):
         pass
@@ -1204,21 +1216,26 @@ class PowerupGraphicsBase(GraphicsComponent):
     def __init__(self):
         super(PowerupGraphicsBase, self).__init__()
         self.time = 0 # For actions upon spawning.
+        self.color = [0.8, 0.8, 1, 1]
 
     def update(self, entity, game):
         super(PowerupGraphicsBase, self).update(entity, game)
         self.time += 1
 
-    def init_anim(self, entity): # Flash when spawned, call in update_graphics.
-        t = self.time / 60 # Time elapsed in seconds
-        r = 0.8
-        g = 0.8
-        b = 1
-        color = (r, g, b, 1)
+    def init_anim(self, entity): # Call in update_graphics.
+        t = self.time / UPDATE_RATE # Time elapsed in seconds
         size = (entity.width, entity.height * t) # Grow in height.
-        return [Color(rgba=color), 
-                Rectangle(pos=entity.pos, size=size),
-                Color()]
+        if self.time % 3 == 0:
+            self.color[-1] = 1 if self.color[-1] == 0 else 0
+        return [Color(rgba=self.color), 
+                Rectangle(pos=Vector(size)/2, size=size)]
+
+    def update_graphics(self, entity):
+        if self.time / UPDATE_RATE < 1:
+            return self.init_anim(entity)
+        else:
+            return [Color(),
+                    Rectangle(size=entity.size, pos=(entity.width/2,entity.height/2), source='./assets/misc/harambe.jpg')]
 
 class PowerupActionBase(ActionComponent):
 
@@ -1232,6 +1249,7 @@ class PowerupActionBase(ActionComponent):
     def effect(self):
         # self may need to be replaced with type(self)
         return SpeedUp(self, 12, 3) # First arg is origin_id, which is hacky.
+
     
     def collide(self, entity, other, entity_container):
         if self.dead:
@@ -1262,7 +1280,7 @@ def create_hero(center, size=(48, 48)):
     # TODO: Add error checking if the name is not in any valid names.
     e = Entity(center=center, size=size)
     chardata = {'name': 'test_hero', 'max_hp': 5, 'hp': 5,
-        'velocity_multiplier': 150, 'attack_speed': 0.3
+        'velocity_multiplier': 175, 'attack_speed': 0.3
         }
     for key, val in chardata.items():
         e.__dict__[key] = val
@@ -1290,7 +1308,7 @@ def create_hero_projectile(center, size=(16, 16), velocity_multiplier=100, targe
 
 def create_riot_police(center, size=(24, 24)):
     e = Entity(center=center, size=size)
-    chardata = {'name': 'Riot Police', 'max_hp': 4, 'hp': 4, 'velocity_multiplier': 30,
+    chardata = {'name': 'Riot Police', 'max_hp': 2, 'hp': 2, 'velocity_multiplier': 75,
         'contact_damage': 1, 'exp': 1
                 }
     for key, val in chardata.items():
@@ -1303,7 +1321,7 @@ def create_riot_police(center, size=(24, 24)):
 
 def create_siner(center, y_direction=1, size=(24, 24)):
     e = Entity(center=center, size=size)
-    chardata = {'name': 'Siner', 'max_hp': 2, 'hp': 2, 'velocity_multiplier': 0,
+    chardata = {'name': 'Siner', 'max_hp': 4, 'hp': 4, 'velocity_multiplier': 0,
         'contact_damage': 1, 'exp': 1
                 }
     for key, val in chardata.items():

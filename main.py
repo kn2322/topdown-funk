@@ -10,7 +10,7 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.uix.screenmanager import ScreenManager, FadeTransition, RiseInTransition, SlideTransition, Screen
 from kivy.animation import Animation
-from kivy.graphics import Rectangle, Color
+from kivy.graphics import Rectangle, Color, PushMatrix, PopMatrix, Scale
 from kivy.core.image import Image as CoreImage
 from kivy.core.text.markup import MarkupLabel
 from functools import partial
@@ -19,7 +19,7 @@ import camera
 import chardata as char
 import userinterface
 import mapinfo
-from abilitydata import Cooldown
+from abilitydata import Cooldown, DamageInfo
 from constants import UPDATE_RATE
 from kivy.vector import Vector
 from math import hypot # Used in entity container
@@ -34,8 +34,11 @@ Builder.load_string("""
     #font_name: 'Times New Roman'
 
 <LevelUpScreen>
+            
+<GameOverScreen>
     background: bg
     txt: txt
+    text_y: -400
 
     Image:
         id: bg
@@ -45,13 +48,14 @@ Builder.load_string("""
 
     Label:
         id: txt
-        pos: 0, -400
-        text: 'You have been visited by [i]The Spooky Meme Man[/i], thank Harambe in 5 seconds or never get 7 for achievement grades again.'
+        pos: 0, root.text_y
+        #text: 'REDACTED has blessed you with the power of [i][b]Growth Mindset[/b][/i], its uncanny its uncanny resemblance with Adolf Hitler fills you with determination.'
+        text: 'Something something died for your sins.'
+        #'You have been visited by [i]The Spooky Meme Man[/i], thank Harambe in 5 seconds or never get 7 for achievement grades again.'
         markup: True
         text_size: self.width / 1.5, None
         font_size: '24sp'
         halign: 'center'   
-            
 
 """)
 
@@ -66,9 +70,10 @@ class ScreenManagement(ScreenManager):
 
         self.game = Game(name='game')
         self.lvlup = LevelUpScreen(name='lvlup')
-
+        self.gameover = GameOverScreen(name='gameover')
         self.add_widget(self.game)
         self.add_widget(self.lvlup)
+        self.add_widget(self.gameover)
         self.paused = False
 
         self.current = 'game'
@@ -77,13 +82,12 @@ class ScreenManagement(ScreenManager):
         self.current = 'lvlup'
 
     def game_over(self, *args): # Called from game.
-        self.current = 'lvlup'
-        self.restart()
+        self.current = 'gameover'
         #self.__init__()
 
     def restart(self, *args):
-        # Temporary resurrection
-        self.game.player.hp = 5
+        self.game.restart()
+        self.current = 'game'
 
     def pause(self, *args):
         # Handles both pausing and unpausing, unpause() removes pause graphic.
@@ -136,7 +140,7 @@ class ScreenManagement(ScreenManager):
         if self.paused:
             self.unpause()"""
 
-    def game_start(self, *args):
+    def game_start(self, *args): # Part of unpausing.
         """if self.pause_screen in self.children:
             # Workaround for the pause screen deactivation.
             self.remove_widget(self.pause_screen)"""
@@ -195,6 +199,7 @@ class EntityContainer(Widget):
     # To be used in main loop with 'for i in children: if condition, destroy'
     # Additionally gold, exp, and such can be awarded here
     def update(self, game, *args):
+
         #if self.clock_count % 2 == 0:
         #self.children = sorted(self.children, key=lambda entity: entity.y) # Sort by y position for drawing.
         self.check_collision(game)
@@ -227,12 +232,25 @@ class EntityContainer(Widget):
         if 0 > entity.right or entity.x > gm.right or \
             0 > entity.top or entity.y > gm.top:
 
-            if not entity.components['Physics'].can_fly: # If entity can fall off.
-                if entity.name in self.players:
+            if not entity.components['Physics'].can_fly: # If entity can fall off, death animations.
+                dmg = DamageInfo(self, 1337, 'absolute')
+                """if entity.name in self.players:
                     # Temporary solution as there is no proper game over, only regain hp on death, prevents crashing.
+                    entity.receive_damage(dmg)
                     entity.center = gm.center
-                    entity.velocity = Vector(0, 0) # Remove displacement sliding.
-                entity.hp -= 1337 # Kill entity, action.destroy() is badly designed, so this is done to implicitly call it from update().
+                    entity.velocity = Vector(0, 0) # Remove displacement sliding."""
+                if not entity.falling:
+                    def death(entity):
+                        entity.receive_damage(dmg)
+
+                    if entity.name not in self.players:
+                        fall = Animation(size=(1,1), step=1/60, duration=1)
+                        fall.on_complete = death
+                        entity.velocity_multiplier = 0
+                        fall.start(entity)
+                        entity.falling = True
+                    else: # Insta kills player to avoid their attributes permanently changing upon game restart.
+                        death(entity)
 
             # Removes entities that fly too far away.
             elif (not -500 < entity.x < gm.right + 500) or (not -500 < entity.y < gm.top + 500):
@@ -270,7 +288,7 @@ class EntityContainer(Widget):
         if not depth:
             return None
 
-        diff = difference(a.pos, b.pos)
+        diff = difference(a.center, b.center)
         #depth = (a.width + b.width) / 2 - hypot(*diff) # Overlapping distance, sum of radii - distance.
         #if depth <= 0: # Important to prevent moving by negative depth.
             #return None
@@ -283,9 +301,6 @@ class EntityContainer(Widget):
             a.pos = Vector(*a.pos) - min_pv
             b.pos = Vector(*b.pos) + min_pv
             
-            
-
-                    
         # Collide for both entities MUST be called, since collision pairs shouldn't be repeated.
         a.components['Action'].collide(a, b, self)
         b.components['Action'].collide(b, a, self)
@@ -343,7 +358,7 @@ class EntityContainer(Widget):
             self.out_of_map_handler(b)
             self.resolve(a, b)
 
-        """checked_pairs = []
+        """checked_pairs = [] # Attempt at spatial partitioning.
         to_be_removed = []
 
         for column, _ in enumerate(self.grid): # x is the column number in the 2d list.
@@ -386,8 +401,7 @@ class EntityContainer(Widget):
                     if i in cell:
                         cell.remove(i)
                         #print(i.name)
-                        self.add_to_grid(i)"""
-                            
+                        self.add_to_grid(i)"""                   
         
         """
         for idx, entity in enumerate(self.children):
@@ -427,12 +441,17 @@ class EntityContainer(Widget):
                     other.collide(entity, self)
             """
 
+    def clear(self, *args): # Except players.
+        for e in self.children:
+            if e.name in self.enemies:
+                e.hp -= 1337 # Kills EVERYTHING HAHAHAHAHAHAH.
+
 class WaveManager: # Handles generating waves and spawning enemies.
 
     def __init__(self):
         # See Entities class.
         self.enemies = Entities.enemies
-        self.batch_ref = [6, 1]#[i for _ in range(2) for i in range(2, 10)] # Number of batches in each wave, is an iterable. E.g. this one goes up to 20 waves.
+        self.batch_ref = [3, 3, 3, 4, 4, 4, 5, 5, 5, 5]#[i for _ in range(2) for i in range(2, 10)] # Number of batches in each wave, is an iterable. E.g. this one goes up to 20 waves.
         self.wave = -1 # So first wave is batch_ref[0]
 
         self.spawn_funcs = []
@@ -444,7 +463,11 @@ class WaveManager: # Handles generating waves and spawning enemies.
         # Spawn timer widget
         self.counter = Label(font_size='81sp', markup=True)
 
-        self.siner_directions = [] # record of already spawned siners.
+        #self.siner_directions = [] # record of already spawned siners. Not used because of random directions.
+
+        # siner_maxcd is the spawn delay between each siner.
+        self.siner_maxcd = 0.5 * UPDATE_RATE # Different cd system that's slightly saner. (CD object is terribad)
+        self.siner_cds = []
 
     def get_names(self): # A list containing all enemy names only.
         return [i[0] for i in self.enemies]
@@ -454,28 +477,42 @@ class WaveManager: # Handles generating waves and spawning enemies.
         # Inefficient as it checks every update loop, checks for all enemies dead.
         for i in ec.children:
             if i.name in ec.enemies:
-                return None
-
-        # Spawn delay.
-        if self.spawn_delay.current <= 0:
-            if self.counter in game.children:
-                game.remove_widget(self.counter)
-                def spawn_delay(*args):
-                    self.spawn_delay.activate()
-                Clock.schedule_once(spawn_delay, 5) # To workaround spawn indicator.
-                self.next_wave(game)
+                break
         else:
-            markup = ['[i]', '[color=#FF0000]'] # List of markup text for the output text.
-            # Rounds up.
-            display_num = int(self.spawn_delay.current + 1)
-            text = str(display_num)
-            for m in markup:
-                text = label_markup(text, m)
-            self.counter.text = text
-            if self.counter not in game.children:
-                game.add_widget(self.counter)
+            # Spawn delay.
+            if self.spawn_delay.current <= 0:
+                if self.counter in game.children:
+                    game.remove_widget(self.counter)
+                    def spawn_delay(*args):
+                        self.spawn_delay.activate()
+                    Clock.schedule_once(spawn_delay, 5) # To workaround spawn indicator triggering next wave.
+                    self.next_wave(game)
+            else: # Spawn indicator number info
+                markup = ['[i]', '[color=#FF0000]'] # List of markup text for the output text.
+                # Rounds up.
+                display_num = int(self.spawn_delay.current + 1)
+                text = str(display_num)
+                for m in markup:
+                    text = label_markup(text, m)
+                self.counter.text = text
+                if self.counter not in game.children:
+                    game.add_widget(self.counter)
 
-            self.spawn_delay.time_step()
+                self.spawn_delay.time_step()
+
+        temp = []
+        while self.siner_cds: # Nice while loop.
+            cd, num_left, info = self.siner_cds.pop(0) # Spawn siners, info is args for spawning
+            if num_left > 0 and cd <= 0:
+                ec.add_entity(self.enemies[1][2](*info)) # The accessing is not obvious, refers to siners.
+                cd = self.siner_maxcd
+                num_left -= 1
+            elif cd > 0:
+                cd -= 1
+            elif num_left == 0:
+                continue
+            temp.append([cd, num_left, info])
+        self.siner_cds = temp
 
     def next_wave(self, game):
         self.wave += 1
@@ -483,9 +520,34 @@ class WaveManager: # Handles generating waves and spawning enemies.
         ec = game.e_container
         # Types of enemies in wave, will be a function.
         chosen = self.enemies # Provisional as there is only 1 enemy type
+
+        # Generate enemy lists.
+        enemy_list = []
+        se = self.enemies
+        # TODO: Competent scheduling based on frames for varied time spawning in one wave.
+        # Specifically designed waves, temporary before something else comes up.
+        if self.wave == 0:
+            for _ in range(3):
+                enemy_list.append(se[0])
+        elif self.wave == 1:
+            for i in [se[2], se[2], se[0]]:
+                enemy_list.append(i)
+        elif self.wave == 2:
+            for i in [se[0], se[0], se[1]]:
+                enemy_list.append(i)
+        elif self.wave == 3:
+            for i in [se[1], se[1], se[2], se[2]]:
+                enemy_list.append(i)
+        elif self.wave == 4:
+            for i in [se[0], se[2], se[2], se[2]]:
+                enemy_list.append(i)
+        elif self.wave == 5:
+            for i in [se[1], se[1], se[1], se[0]]:
+                enemy_list.append(i)
+        else:
+            enemy_list = [random.choice(chosen) for _ in range(self.batch_ref[self.wave])]
         
-        for batch in range(self.batch_ref[self.wave]):
-            en = random.choice(chosen)
+        for en in enemy_list:
             name, batch_size, func = en
 
             if name == 'Siner':
@@ -517,7 +579,7 @@ class WaveManager: # Handles generating waves and spawning enemies.
 
                 #s = partial(spawn, func, spawn_center, y_direction)
 
-                for i in range(batch_size):
+                """for i in range(batch_size): # Replaced with new spawning system.
                     entity = func(spawn_center, y_direction)
                     delay = i * 30 # frames in delay
                     # Preventing delay of 0 being scheduled is PARAMOUNT.
@@ -530,22 +592,39 @@ class WaveManager: # Handles generating waves and spawning enemies.
                         #s = partial(ec.add_entity, spawn)
                         self.sane_clock(entity, 1/UPDATE_RATE * delay, ec)
                         #Clock.schedule_once(self.spawn_funcs[j], 1/UPDATE_RATE * delay)
+                """
+                cd = 0
+                num_left = batch_size
+                info = [spawn_center, y_direction]
+                self.siner_cds.append([cd, num_left, info])
 
             else:#if name == 'Riot Police':
                 r = random.uniform
-                spawn_center = [r(0, i) for i in game_map.size]
+                gm = game_map
+                # bounds is corner 100 x 100 squares on the map, where enemies can spawn.
+                bounds = [
+                            [(50, 50), (150, 150)], # bot left 
+                            [(50, gm.top-150), (150, gm.top-50)], # top left
+                            [(gm.right-150, 50), (gm.right-50, 150)], # bot right
+                            [(gm.right-150, gm.top-150), (gm.right-50, gm.top-50)] # top right
+                            ]
+                spawn_center = random.choice(bounds)
+                # NOTE: The list() here is crucial to prevent an immutable valueerror.
+                shuffled = list(zip(*spawn_center)) # Inverts the center to make it bounds_x and bounds_y, for ease of looping.
+                #spawn_center = [r(0, i) for i in game_map.size]
                 
                 for i in range(batch_size):
-                    pos = [i + random.randint(-100, 100) for i in spawn_center]
-                    e = func(pos)
+                    p = [random.uniform(a, b) for a, b in shuffled]
+                    #pos = [i + random.randint(-100, 100) for i in spawn_center]
+                    e = func(p)
                     ec.add_entity(e)
                     #self.sane_clock(e, random.uniform(0.01, 1), ec)
 
     # Visual Indicator for entity spawning, TODO.œ
-    def pre_spawn(self, entity, delay=1):
-        Clock.schedule_once()
+    #def pre_spawn(self, entity, delay=1):
+    #    Clock.schedule_once()
 
-    def sane_clock(self, obj, time, ec):
+    def sane_clock(self, obj, time, ec): # Copious amounts of workarounds, not used anymore.
         """#print(func)
         copied = deepcopy(func)
         #print(copied == func)
@@ -567,7 +646,7 @@ class WaveManager: # Handles generating waves and spawning enemies.
 
     # Uses data on likelihood of enemies to appear to generate probs of chosen enemy types to appear.
     # TODO: create data struct for enemy probability modifiers.
-    def gen_probability(self, enemies):
+    def gen_probability(self, enemies): # Look into static methods is self is not needed.
         return zip([1/len(enemies) for _ in enemies], enemies)
 
 class DecalEngine(Widget): # Modified from graphics component.
@@ -602,23 +681,29 @@ class DecalEngine(Widget): # Modified from graphics component.
                     decal['on_complete']()
                 self.decals.remove(decal)
                 continue
+
+            color = decal['color']
+            size = decal['size']
+            if decal['name'] == 'splash':
+                # Fade away function if decal should fade.
+                color[-1] = -(decal['lifetime'] / decal['duration']) + 1
+            elif decal['name'] == 'spawn_indicator':
+                ratio = decal['lifetime'] / decal['duration']
+                #size = Vector(size) - (Vector(size) * ratio) # Decreasing
+                size = Vector(size) * ratio # Increasing
+
             # TODO: Add mechanism to only draw if decal is on screen.
             # Adjust to camera.
             draw_pos = Vector(*decal['center']) + Vector(*offset)
 
             # Adjust center position to x1, y1 based on size.
-            draw_pos -= Vector(*decal['size']) / 2
-
-            color = decal['color']
-            if decal['fade'] == True:
-                # Fade away function if decal should fade.
-                color[-1] = -(decal['lifetime'] / decal['duration']) + 1
+            draw_pos -= Vector(*size) / 2
 
             self.canvas.add(Color(rgba=color))
             g = Rectangle(
                     texture=decal['image'].texture, 
                     pos=draw_pos, 
-                    size=decal['size'])
+                    size=size)
             self.canvas.add(g)
             #decal['color'][-1] -= 0.5 / UPDATE_RATE # Fade out, TODO: Implement these for individuals.
             decal['lifetime'] += 1
@@ -646,13 +731,13 @@ class DecalEngine(Widget): # Modified from graphics component.
     def decal_splash(self, center, on_complete=None): # Use this one as an example.
         r = random.random
         config = {
+            'name': 'splash',
             'center': center, 
             'color': [r(), r(), r(), 1], 
             'duration': 3 * UPDATE_RATE,
             'image': CoreImage('assets/decals/decal1.png'),
             'size': (100, 100),
             'lifetime': 0,
-            'fade': True, # Fade is if to make the opactiy (inversely) proportional to lifetime.
             'on_complete': on_complete
             }
         return config
@@ -660,13 +745,13 @@ class DecalEngine(Widget): # Modified from graphics component.
     def decal_spawn_indicator(self, center, on_complete=None):
         r = random.random
         config = {
+            'name': 'spawn_indicator',
             'center': copy.deepcopy(center), # copy to avoid kivy property binding.
             'color': [r(), r(), r(), 1], 
             'duration': 1 * UPDATE_RATE,
             'image': CoreImage('assets/decals/decal3.png'),
             'size': (50, 50),
             'lifetime': 0,
-            'fade': False,
             'on_complete': on_complete
             }
         return config    
@@ -675,6 +760,8 @@ class Game(Screen):
 
     def __init__(self, **kwargs):
         super(Game, self).__init__(**kwargs)
+
+
 
         # The drawing order.
         self.game_map = mapinfo.Map('galaxy', size_hint=(None, None))
@@ -692,13 +779,30 @@ class Game(Screen):
                                 text='[i][color=#801dab]Tooty Frooty go get that booty[/i][/color]',
                                 markup=True)
 
-        self.map_size = self.game_map.size
+        self.map_size = self.game_map.size # Kind of redundant, since game_map is already an instance variable.
 
         # Pillars.
         x_locations = self.map_size[0] * 0.3, self.map_size[0] * 0.7
         y_locations = self.map_size[1] * 0.3, self.map_size[1] * 0.7
         for pos in product(x_locations, y_locations):
             self.e_container.add_entity(char.create_pillar(pos))
+        # Map corner pillars.
+        m = self.game_map
+
+        size = Vector(128, 128)
+        half = size / 2
+        #corners = (m.x-half.x, m.y-half.y), (m.x+half.x, m.y-half.y), (m.x-half.x, m.y+half.y),\
+                    #(m.x+m.width+half.x, m.y-half.y), (m.x+m.width+half.x, m.y+half.y), (m.x+m.width-half.x, m.y-half.y),\
+                    #(m.x-half.x, m.y+m.height+half.y), (m.x-half.x, m.y+m.height-half.y), (m.x+half.x, m.y+m.height+half.y)
+                    #(m.x+m.width, m.y+m.height)
+
+        """[(m.x, m.y), 
+                    (m.x+m.width, m.y), 
+                    (m.x, m.y+m.height), 
+                    (m.x+m.width, m.y+m.height)]:"""
+
+        #for pos in corners:
+            #self.e_container.add_entity(char.create_pillar(pos, size=size))
 
         # Test powerups.
         self.e_container.add_entity(char.create_powerup((300, 300)))
@@ -720,6 +824,9 @@ class Game(Screen):
         for i in [self.debug, self.debug2, self.debug3, self.debug4]:
             self.add_widget(i)
 
+        # CONSTANTS, more or less
+        self.player_spawn_center = self.game_map.center
+
         self.game_start() # Activate update loop.
 
     def update(self, dt):
@@ -737,6 +844,7 @@ class Game(Screen):
         fps = Clock.get_rfps()
         self.debug3.text = str(fps)
         self.debug4.text = str(self.player.components['Action'].exp)
+
 
     def game_start(self, *args):
         self.update_loop = Clock.schedule_interval(self.update, 1/UPDATE_RATE)
@@ -779,10 +887,19 @@ class Game(Screen):
                 wid.on_touch_down(touch, *args)
 
 
-    def game_over(self, *args): # Called from player.
+    def game_over(self, player, *args): # Called from player.
         self.update_loop.cancel()
         print('game over')
-        self.parent.game_over()
+        self.parent.game_over(player)
+
+    def restart(self, *args): # Resets game.
+        self.e_container.clear() # Clears all non player entities.
+        self.player.hp = self.player.max_hp # Restore health.
+        self.player.velocity = Vector(0, 0) # Remove velocity.
+        self.wave_manager.wave = -1 # Reset wave count.
+        self.player.center = self.player_spawn_center # Reset pos.
+        self.game_map.reset() # Resets map.
+        self.game_start()
         
 
 class LevelUpScreen(Screen):
@@ -821,6 +938,22 @@ class PauseScreen(Button):
 
     def on_touch_up(self, touch):
         self.parent.restart()
+
+class GameOverScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super(GameOverScreen, self).__init__(**kwargs)
+        self.rising_text = Animation(y=0, duration=2, t='out_bounce') # t is the transition, bouncy for meme value.
+    
+    def on_touch_down(self, touch, *args):
+        self.parent.restart()
+
+    def on_pre_enter(self):
+        self.rising_text.start(self.txt)
+    
+    def on_leave(self):
+        self.rising_text.cancel(self.txt) # Stop the animation before leaving
+        self.txt.y = self.text_y
 
 # TDS: Top Down Shooter
 class TDSApp(App):

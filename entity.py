@@ -63,15 +63,22 @@ class Entity(Widget):
         # Entities with 1 < derives the individual ones from the attack speed.
         self.attack_speed = 0
 
+        self.falling = False # For falling death.
+
         # Leveling related segments.
         self.exp = 0 # Amount of exp rewarded on kill, leveling up (for players) is handled in action component.
 
     def update(self, game):
         #Clock.schedule_once(self.record_pos, -1)
-        for name, item in self.components.items():
-            if item is None:
-                continue
-            item.update(self, game)
+        s = self.components
+        if s['Physics']:
+            s['Physics'].update(self, game)
+        if s['Input']:
+            s['Input'].update(self, game)
+        if s['Action']:
+            s['Action'].update(self, game)
+        if s['Graphics']:
+            s['Graphics'].update(self, game)
 
     """Deprecated, pointless method.
     def collide(self, other, entity_container):

@@ -27,15 +27,27 @@ class Map(Widget):
         super(Map, self).__init__(**kw)
         self.pos = 0, 0
         self.size, self.graphics = self.MAPS[map_name]
+        self.background = './assets/maps/skybg.jpg' # Temporary background solution, better to have some structure for changing bg later on.
+        self.time = 0
+        self.bg_size = 1500
+
+    def reset(self):
+    	self.time = 0
         
 
     def update(self, game): # very questionable
         offset = game.camera.offset
         self.canvas.clear()
+        self.canvas.add(Color())
+        self.bg_size = 1500 - self.time / 5 # Scales background size with time elapsed, to give 'floating away' feeling.
+        self.canvas.add(Rectangle(pos=(0,0), size=(self.bg_size, self.bg_size), source=self.background))
+
 
         self.graphics.pos = offset
         self.canvas.add(Color())
         self.canvas.add(self.graphics)
+
+        self.time += 1
 
 # Serves little purpose, since collision is handled by map
 class MapObject(Widget):
