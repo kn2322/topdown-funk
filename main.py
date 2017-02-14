@@ -183,6 +183,7 @@ class EntityContainer(Widget):
         self.terrain = en.terrain
         self.powerups = en.powerups
         self.all_entites = set(self.players + self.enemies + self.projectiles + self.terrain + self.powerups)
+        self.living = set(self.players + self.enemies)
 
         self.game = game # Terribad object oriented design with Kevin.
         self.game_map = game.game_map

@@ -67,6 +67,8 @@ class Cooldown:
 	def time_step(self):
 		if self.current > 0:
 			self.current -= 1/UPDATE_RATE
+		else:
+			self.current = 0
 """
 # BasicAttack
 # Not sure if useful to add another layer of abstraction. NO it is not.

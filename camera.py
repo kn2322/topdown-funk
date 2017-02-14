@@ -13,9 +13,22 @@ class Camera(Widget): # Widget to use the pos and size properties automatically
         self.offset = (0, 0)
 
     def update(self, game):
+        rs = game.user_interface.right_stick
         # A hack (..) as in __init__ right_stick's size hasn't been __init__
-        self.size = Vector(*game.user_interface.right_stick.size) * 1
-        self.camerafunc(self, game.player)
+        self.size = Vector(*rs.size) * 1
+        #self.camerafunc(self, game.player)
+
+        diff = Vector(*game.player.center) - self.center
+        center = Vector(self.center) + diff / 10
+        """if rs.touchpos: # Enter the Gungeon style camera.
+            center = Vector(self.center) + diff / 10
+            touchoffset = Vector(rs.touchpos) - Vector(rs.center) # Where mouse is compared is rightstick center.
+            #diff = Vector(touchpos) - self.center
+            center = Vector(center) + Vector(touchoffset) / 25
+        else: # If touch is not down.
+            center = Vector(*self.center) + diff / 15 # Adds slight lag/smoothing
+        """
+        self.center = center
         # Math to transform all drawn objects to within the window.
         self.offset = self.anchor[0] - self.x, self.anchor[1] - self.y
 

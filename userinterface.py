@@ -157,7 +157,7 @@ Builder.load_string("""
                 rgb: 0.1, 0.2, 0.3
             Line:
                 width: 2
-                circle: (*self.center, self.width / 2)
+                circle: self.center[0], self.center[1], self.width / 2
 
 <HealthBar>
     size: 200, 50
@@ -327,6 +327,7 @@ class RightStick(Widget):
         self.key_directions = {'1': Vector(1, 0), '2': Vector(-1, 0), '3': Vector(0, 1), '4': Vector(0, -1)}
 
         self.mode = 'TOUCH'
+        self.touchpos = None # Whether the right stick is down.
 
     def on_touch_down(self, touch):
         self.touch_handler(touch)
@@ -336,11 +337,13 @@ class RightStick(Widget):
 
     def on_touch_up(self, touch):
         self.angle = None
+        self.touchpos = None
 
     def touch_handler(self, touch):
         if not self.mode == 'TOUCH':
             return None
         if self.collide_point(*touch.pos):
+            self.touchpos = touch.pos
             d = difference(self.center, touch.pos)
             self.angle = atan2(d[1], d[0])
         else:

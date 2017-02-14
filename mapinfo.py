@@ -3,6 +3,7 @@ from kivy.uix.image import Image
 from kivy.graphics import Rectangle, Ellipse, Color
 from kivy.vector import Vector
 from kivy.uix.gridlayout import GridLayout
+#import colorsys
 
 """Module used to contain all information about the game map(s),
 including obstacles to be placed, and other fine details that
@@ -38,8 +39,14 @@ class Map(Widget):
     def update(self, game): # very questionable
         offset = game.camera.offset
         self.canvas.clear()
-        self.canvas.add(Color())
         self.bg_size = 1500 - self.time / 5 # Scales background size with time elapsed, to give 'floating away' feeling.
+
+        #color_rgb = [1, 1, 1]
+        #color_hsv = colorsys.rgb_to_hsv(*color_rgb)
+        #color_hsv = list(color_hsv)
+        #color_hsv[1] = 0.9
+        #print(color_hsv)
+        self.canvas.add(Color(0,0.2,1, mode='hsv'))
         self.canvas.add(Rectangle(pos=(0,0), size=(self.bg_size, self.bg_size), source=self.background))
 
 
