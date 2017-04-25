@@ -33,6 +33,13 @@ Builder.load_string("""
 <Label>
     #font_name: 'Times New Roman'
 
+<TitleScreen>
+    on_touch_up:
+        root.manager.start_signal()
+    Label:
+        text: 'PP game'
+        font_size: '48sp'
+
 <LevelUpScreen>
             
 <GameOverScreen>
@@ -67,16 +74,24 @@ class ScreenManagement(ScreenManager):
     def __init__(self, **kw):
         super(ScreenManagement, self).__init__(**kw)
         self.transition = FadeTransition(duration=.8) # SlideTransition has a bug that makes the new screen black, so is not used.
-
+        
+        self.title = TitleScreen(name='title')
         self.game = Game(name='game')
         self.lvlup = LevelUpScreen(name='lvlup')
         self.gameover = GameOverScreen(name='gameover')
+        self.add_widget(self.title)
         self.add_widget(self.game)
         self.add_widget(self.lvlup)
         self.add_widget(self.gameover)
         self.paused = False
 
+        self.current = 'title'
+
+    def start_signal(self):
         self.current = 'game'
+
+    def to_title(self):
+        self.current = ' title'
 
     def level_up(self, *args):
         self.current = 'lvlup'
@@ -141,13 +156,16 @@ class ScreenManagement(ScreenManager):
             self.unpause()"""
 
     def game_start(self, *args): # Part of unpausing.
-        """if self.pause_screen in self.children:
+        if self.pause_screen in self.children:
             # Workaround for the pause screen deactivation.
-            self.remove_widget(self.pause_screen)"""
+            self.remove_widget(self.pause_screen)
         d = 0.2 if self.paused else self.transition.duration
         Clock.schedule_once(self.game.game_start, d)
         Clock.schedule_once(self.unpause, d)
-        self.current = 'game'
+        #self.current = 'game'
+
+class TitleScreen(Screen):
+    pass
 
 # Container widget for all game entites, so they can be referenced by the game.
 # Also the collision detector
@@ -243,10 +261,23 @@ class EntityContainer(Widget):
                     def death(entity):
                         entity.receive_damage(dmg)
 
-                    if entity.name not in self.players:
+                    if True:#entity.name not in self.players:
+                        original_size = entity.size
+                        original_v_multiplier = entity.velocity_multiplier
                         fall = Animation(size=(1,1), step=1/60, duration=1)
                         fall.on_complete = death
+                            
                         entity.velocity_multiplier = 0
+                        
+                        if entity.name in self.players:
+                            def rebirth(death): # Temp.
+                                def born(entity):
+                                    entity.size = original_size
+                                    entity.velocity_multiplier = original_v_multiplier
+                                    death(entity)
+                                return born
+                            fall.on_complete = rebirth(death)
+
                         fall.start(entity)
                         entity.falling = True
                     else: # Insta kills player to avoid their attributes permanently changing upon game restart.
@@ -847,6 +878,15 @@ class Game(Screen):
 
 
     def game_start(self, *args):
+        if self.paused:
+            # Unpauses, and removes paused graphics.
+            self.remove_widget(self.pause_text)
+
+            for i in self.canvas.children:
+                if type(i) in (Color, Rectangle):
+                    self.canvas.remove(i)
+
+            self.paused = False
         self.update_loop = Clock.schedule_interval(self.update, 1/UPDATE_RATE)
 
     # TODO: Cancel update loop while in other screens.
@@ -857,30 +897,17 @@ class Game(Screen):
 
     def pause(self, *args):
         self.update_loop.cancel()
-
-        if self.paused:
-            # Unpauses, and removes paused graphics.
-            self.remove_widget(self.pause_text)
-
-            for i in self.canvas.children:
-                if type(i) in (Color, Rectangle):
-                    self.canvas.remove(i)
-
-            self.game_start()
-            self.paused = False
-
-        else:
-            # Game is paused.
-            with self.canvas:
-                Color(rgba=(0, 0, 0, 0.5))
-                Rectangle(size=self.size, pos=self.pos)
-            self.add_widget(self.pause_text)
-            self.paused = True
+        # Game is paused.
+        with self.canvas:
+            Color(rgba=(0, 0, 0, 0.5))
+            Rectangle(size=self.size, pos=self.pos)
+        self.add_widget(self.pause_text)
+        self.paused = True
 
     def on_touch_down(self, touch, *args):
         if self.paused:
             # Unpauses upon touch anywhere.
-            self.pause()
+            self.game_start()
         else:
             for wid in list(self.walk())[1:]:
                 # Hack for letting this widget have on_touch_down, activates all children's touches.
@@ -890,7 +917,7 @@ class Game(Screen):
     def game_over(self, player, *args): # Called from player.
         self.update_loop.cancel()
         print('game over')
-        self.parent.game_over(player)
+        self.manager.game_over(player)
 
     def restart(self, *args): # Resets game.
         self.e_container.clear() # Clears all non player entities.

@@ -414,7 +414,7 @@ class HeroGraphicsComponent(GraphicsComponent):
 
         #r = 1.2 - (cur_as / max_as) # Shades of red depending on attack cd.
 
-        u = 2 - (cur_as / max_as) # Black to color.
+        u = 1 - cur_as / max_as #2 - (cur_as / max_as) # Black to color.
         r, gr, b = u, u, u
 
         color = [r, gr, b, a]
