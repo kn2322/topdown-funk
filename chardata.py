@@ -144,7 +144,7 @@ class GraphicsComponent:
     # Not handled by kv lang bc it's not explicit enough for update loop.
     def update(self, entity, game):
         entity.canvas.clear()
-        if not game.camera.collide_widget(entity):
+        if not game.camera.collide_widget(entity): # Don't draw if not on screen.
             return None
         self.graphics = self.update_graphics(entity)
 
@@ -281,7 +281,11 @@ class HeroInputComponent(InputComponent):
             #entity.components['Physics'].direction = [0, 0]
             self.leftdown = False
         self.rightdown = bool(ui.right_stick.angle)
-        self.right_angle = ui.right_stick.angle
+        if self.rightdown:
+            diff = Vector(ui.right_stick.touchpos) - entity.center - game.camera.offset # Distance/angle of player position to touch.
+            self.right_angle = atan2(diff[1], diff[0])
+        else:
+            self.right_angle = 0
 
     def activate_left(self, entity, left_stick):
         angle = left_stick.angle
@@ -528,7 +532,8 @@ class HeroActionComponent(ActionComponent):
     # Needs to know game for both ui and e_container
     # Used for handling cooldowns and conditions for basic attack.
     def activate_right(self, entity, game):
-        angle = game.user_interface.right_stick.angle # Angle of touch.
+        #angle = game.user_interface.right_stick.angle # Angle of touch.
+        angle = entity.components['Input'].right_angle
         # Angle is None if touch is not pressed.
         if angle:# and self.basic_attack_cd.current <= 0:
 
@@ -545,13 +550,15 @@ class HeroActionComponent(ActionComponent):
                 direction = Vector(cos(angle), sin(angle)).rotate(rot)
                 a.components['Physics'].direction = direction
                 a.center = Vector(*a.center) + direction * entity.width / 2 # For spawning missile at edge of entity.
+                #a.velocity_multiplier = 700 # Experimental.
                 game.e_container.add_entity(a)
 
             #for idx, _ in enumerate(range(1)): # Chain missile test.
                 #Clock.schedule_once(create_proj, idx/10)
                 #create_proj()
 
-            for rot in [-15, 0, 15]: # Chain missile test.
+            #for rot in range(-180, 180, 30):#[-15, 0, 15]: # Chain missile test.
+            for rot in (-15, 0, 15):
                 create_triple_proj(rot)
 
             # Moved to be decoupled from activate_right.
@@ -697,6 +704,7 @@ class RiotPoliceActionComponent(ActionComponent):
         # Moved to main entity
 
     def collide(self, entity, other, entity_container):
+        knockback = (Vector(*other.pos) - Vector(*entity.pos)).normalize()
         if other.name in entity_container.players: # entity_id is yet to be implemented.
             dmg_inf = DamageInfo(
                 entity,
@@ -707,9 +715,9 @@ class RiotPoliceActionComponent(ActionComponent):
             other.receive_damage(dmg_inf)
             # Knockback code on contact.
             # TODO: Add variable for knockback magnitude.
-            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 4
+            other.velocity +=  knockback * 4
         elif other.name in entity_container.enemies:
-            other.velocity += (Vector(*other.pos) - Vector(*entity.pos)).normalize() * 1
+            other.velocity += knockback * 4
 
     def destroy(self, entity, game):
         game.player.receive_exp(entity.exp)
@@ -1005,11 +1013,12 @@ class HeroProjectilePhysicsComponent(PhysicsComponent):
 
 class HeroProjectileGraphicsComponent(GraphicsComponent):
 
-    image = CoreImage('assets/entities/player_missile.png') # Shared instance of the image texture.
+    #images = CoreImage('assets/entities/player_missile.png') # Shared instance of the image texture.
 
     def __init__(self, **kwargs):
         super(HeroProjectileGraphicsComponent, self).__init__(**kwargs)
         self.explosion_config = None # To save the randomly generated explosion color.
+        self.image = CoreImage('assets/entities/player_missile.png')
 
     def update_graphics(self, entity):
         r = random.random
@@ -1019,7 +1028,7 @@ class HeroProjectileGraphicsComponent(GraphicsComponent):
         g = []
         if state == 'initial':
             img = self.image
-            image_size = self.fit_image(entity, img)
+            image_size = self.fit_image(entity, img) * 1
             ins = [
             Color(), 
             Rotate(angle=angle, axis=(0, 0, 1)), # origin is omitted, set in update_graphics.
@@ -1135,7 +1144,7 @@ class HeroProjectileActionComponent(ActionComponent):
                 other.velocity += difference.normalize() * magnitude
 
 
-            if other.name in entity_container.enemies:
+            if other.name not in entity_container.players:
                 d = DamageInfo(entity, self.damage, 'projectile')
                 other.receive_damage(d)
 
@@ -1167,7 +1176,7 @@ class PillarPhysicsComponent(PhysicsComponent):
 
     def __init__(self, center):
         super(PillarPhysicsComponent, self).__init__()
-        self.eternal_rest = center
+        self.eternal_rest = center # position.
         self.can_fly = True
     
     def move(self, entity, game): # Redundant since move() is called from update()
@@ -1181,9 +1190,13 @@ class PillarGraphicsComponent(GraphicsComponent):
     image = CoreImage('assets/entities/pillar.png')
 
     def update_graphics(self, entity):
-        g = [Color()]
+        # Bad accessing.
+        acomp = entity.components['Action']
+        ratio = sum(entity.size) / sum(acomp.original) # ratio between current pillar size and original size.
+
+        g = [Color(0,ratio-1,1,mode='hsv')]
         img = self.image
-        image_size = Vector(*self.fit_image(entity, img)) * 1.5
+        image_size = Vector(*self.fit_image(entity, img)) * 2
 
         g.append(Rectangle(size=image_size, pos=Vector(*entity.size)/2, texture=img.texture))
 
@@ -1195,8 +1208,36 @@ class PillarActionComponent(ActionComponent):
     #def on_receive_damage(self, entity, damage_info):
         #pass
 
+    def __init__(self, grow_to=1.5, knockback=10):
+        super(PillarActionComponent, self).__init__()
+        self.original = 0
+        self.grow_to = grow_to # Size to grow to when hit, multiplier.
+        self.deflate_speed = 200 # Side pixels/sec
+        self.knockback = knockback
+        self.inflated_cd = Cooldown(1) # Duration of inflation before deflation.
+
     def update(self, entity, game):
-        pass
+        if not self.original: # Should be moved to init if it takes entity.
+            self.original = entity.size[:] # Important to make copy.
+
+        #print(self.inflated_cd.current)
+        if self.inflated_cd.current:
+            self.inflated_cd.time_step()
+        elif entity.size > self.original:
+            entity.size = Vector(entity.size) - [self.deflate_speed / UPDATE_RATE] * 2
+        else:
+            entity.size = self.original
+
+    def on_receive_damage(self, entity, damage_info): # Grows in size then deflates when hit by projectile.
+        if damage_info.type == 'projectile':
+            if self.original: # If original is not assigned yet -.- fix so init takes entity pls.
+                entity.size = Vector(self.original) * self.grow_to
+                self.inflated_cd.activate()
+
+    def collide(self, entity, other, entity_container):
+        if self.inflated_cd.current >= self.inflated_cd.default - 0.1: # 0.1 secs of high knockback.
+            other.velocity += (Vector(*other.center) - entity.center).normalize() * self.knockback
+
 
 """Below here are powerups.
 """
@@ -1292,7 +1333,7 @@ def create_hero(center, size=(48, 48)):
     # The add_widget step is not in the function, so it's decoupled.
     return e
 
-def create_hero_projectile(center, size=(16, 16), velocity_multiplier=100, target_pos=None, knockback=8): # target_pos is for missile curving.
+def create_hero_projectile(center, size=(16, 16), velocity_multiplier=100, target_pos=None, knockback=16): # target_pos is for missile curving.
     e = Entity(size=size)
     e.center = center
     chardata = {'name': 'test_projectile', 'max_hp': 1, 'hp': 1,
@@ -1348,7 +1389,7 @@ def create_lancer(center, velocity_multiplier=175, size=(24, 24)):
 def create_pillar(center, size=(64, 64)):
     e = Entity(center=center, size=size)
     chardata = {'name': 'Pillar', 'max_hp': 1, 'hp': 1, 'velocity_multiplier': 0,
-        'contact_damage': 0, 'exp': 0, 'friction': 0
+        'contact_damage': 0, 'exp': 0, 'friction': 0, 'can_be_damaged': False
                 }
     for key, val in chardata.items():
         e.__dict__[key] = val
@@ -1361,7 +1402,7 @@ def create_pillar(center, size=(64, 64)):
 def create_powerup(center, size=(48, 48)):
     e = Entity(center=center, size=size)
     chardata = {'name': 'TestPowerup', 'max_hp': 1, 'hp': 1, 'velocity_multiplier': 0,
-        'contact_damage': 0, 'exp': 0, 'friction': 0
+        'contact_damage': 0, 'exp': 0, 'friction': 0, 'can_be_damaged': False
                 }
     for key, val in chardata.items():
         e.__dict__[key] = val

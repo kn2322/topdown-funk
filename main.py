@@ -201,6 +201,7 @@ class EntityContainer(Widget):
         self.terrain = en.terrain
         self.powerups = en.powerups
         self.all_entites = set(self.players + self.enemies + self.projectiles + self.terrain + self.powerups)
+        self.living = set(self.players + self.enemies)
 
         self.game = game # Terribad object oriented design with Kevin.
         self.game_map = game.game_map
@@ -282,6 +283,7 @@ class EntityContainer(Widget):
                         entity.falling = True
                     else: # Insta kills player to avoid their attributes permanently changing upon game restart.
                         death(entity)
+                            
 
             # Removes entities that fly too far away.
             elif (not -500 < entity.x < gm.right + 500) or (not -500 < entity.y < gm.top + 500):
@@ -843,9 +845,8 @@ class Game(Screen):
         self.wave_manager = WaveManager()
 
         self.e_container.add_entity(self.player)
-        self.camera = camera.Camera(camerafunc=camera.center_cam, 
-                                    anchor=self.user_interface.right_stick.pos,
-                                    center=self.player.center) # This line does not seem to do anything.
+        self.camera = camera.Camera(camera_type='center',
+                                    anchor=self.user_interface.right_stick.pos)
 
         # Debug text stuff.
         self.debug = Label(pos=(300, 250))
