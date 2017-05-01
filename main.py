@@ -257,26 +257,26 @@ class EntityContainer(Widget):
                     entity.receive_damage(dmg)
                     entity.center = gm.center
                     entity.velocity = Vector(0, 0) # Remove displacement sliding."""
-                if not entity.falling:
+                if True:
                     def death(entity):
                         entity.receive_damage(dmg)
 
-                    if True:#entity.name not in self.players:
-                        original_size = entity.size
-                        original_v_multiplier = entity.velocity_multiplier
+                    if not entity.falling:#entity.name not in self.players:
+                        entity.original_size = entity.size[:] # Disgusting workaround temp.
+                        entity.original_v_multiplier = entity.velocity_multiplier
                         fall = Animation(size=(1,1), step=1/60, duration=1)
-                        fall.on_complete = death
                             
                         entity.velocity_multiplier = 0
                         
                         if entity.name in self.players:
-                            def rebirth(death): # Temp.
-                                def born(entity):
-                                    entity.size = original_size
-                                    entity.velocity_multiplier = original_v_multiplier
-                                    death(entity)
-                                return born
-                            fall.on_complete = rebirth(death)
+                            def rebirth(entity): # Temp.
+                                entity.size = entity.original_size[:]
+                                #entity.size = original_size
+                                entity.velocity_multiplier = entity.original_v_multiplier
+                                entity.receive_damage(dmg)
+                            fall.on_complete = rebirth
+                        else:
+                            fall.on_complete = death
 
                         fall.start(entity)
                         entity.falling = True
@@ -921,6 +921,7 @@ class Game(Screen):
 
     def restart(self, *args): # Resets game.
         self.e_container.clear() # Clears all non player entities.
+        self.player.falling = False
         self.player.hp = self.player.max_hp # Restore health.
         self.player.velocity = Vector(0, 0) # Remove velocity.
         self.wave_manager.wave = -1 # Reset wave count.
@@ -973,7 +974,7 @@ class GameOverScreen(Screen):
         self.rising_text = Animation(y=0, duration=2, t='out_bounce') # t is the transition, bouncy for meme value.
     
     def on_touch_down(self, touch, *args):
-        self.parent.restart()
+        self.manager.restart()
 
     def on_pre_enter(self):
         self.rising_text.start(self.txt)
