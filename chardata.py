@@ -144,7 +144,7 @@ class GraphicsComponent:
     # Not handled by kv lang bc it's not explicit enough for update loop.
     def update(self, entity, game):
         entity.canvas.clear()
-        if not game.camera.collide_widget(entity):
+        if not game.camera.collide_widget(entity): # Don't draw if not on screen.
             return None
         self.graphics = self.update_graphics(entity)
 
@@ -281,7 +281,11 @@ class HeroInputComponent(InputComponent):
             #entity.components['Physics'].direction = [0, 0]
             self.leftdown = False
         self.rightdown = bool(ui.right_stick.angle)
-        self.right_angle = ui.right_stick.angle
+        if self.rightdown:
+            diff = Vector(ui.right_stick.touchpos) - entity.center - game.camera.offset # Distance/angle of player position to touch.
+            self.right_angle = atan2(diff[1], diff[0])
+        else:
+            self.right_angle = 0
 
     def activate_left(self, entity, left_stick):
         angle = left_stick.angle
@@ -528,7 +532,8 @@ class HeroActionComponent(ActionComponent):
     # Needs to know game for both ui and e_container
     # Used for handling cooldowns and conditions for basic attack.
     def activate_right(self, entity, game):
-        angle = game.user_interface.right_stick.angle # Angle of touch.
+        #angle = game.user_interface.right_stick.angle # Angle of touch.
+        angle = entity.components['Input'].right_angle
         # Angle is None if touch is not pressed.
         if angle:# and self.basic_attack_cd.current <= 0:
 
@@ -1013,7 +1018,7 @@ class HeroProjectileGraphicsComponent(GraphicsComponent):
     def __init__(self, **kwargs):
         super(HeroProjectileGraphicsComponent, self).__init__(**kwargs)
         self.explosion_config = None # To save the randomly generated explosion color.
-        self.image = CoreImage('assets/entities/cookie{}.png'.format(random.randint(1, 2)))
+        self.image = CoreImage('assets/entities/player_missile.png')
 
     def update_graphics(self, entity):
         r = random.random
@@ -1023,7 +1028,7 @@ class HeroProjectileGraphicsComponent(GraphicsComponent):
         g = []
         if state == 'initial':
             img = self.image
-            image_size = self.fit_image(entity, img) * 5
+            image_size = self.fit_image(entity, img) * 1
             ins = [
             Color(), 
             Rotate(angle=angle, axis=(0, 0, 1)), # origin is omitted, set in update_graphics.
